@@ -15,3 +15,6 @@ package.json
 package-lock.json
 CLAUDE.md
 *_PLAN.md
+.project
+.project
+.gitignore
