@@ -283,7 +283,7 @@ public class ActionParser {
             
             // Add to actions table
             Object[] rowData = new Object[]{
-                Boolean.FALSE,  // Initially unchecked
+                Boolean.TRUE,  // Initially checked
                 functionName.replace("_", " "),
                 formatDescription(functionName, arguments),
                 "",  // Status
