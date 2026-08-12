@@ -679,7 +679,7 @@ public class ConversationalToolHandler {
     private void handleToolCallsFromStream(List<AnthropicPlatformApiProvider.ToolCall> toolCalls) {
         try {
             // Update UI with tool calling status
-            String toolExecutionHeader = "\n\n🔧 **Executing tools...**\n";
+            String toolExecutionHeader = "\n\n[handleToolCallsFromStream] 🔧 **Executing tools...**\n";
             javax.swing.SwingUtilities.invokeLater(() -> {
                 userHandler.onUpdate(toolExecutionHeader);
             });
@@ -718,7 +718,7 @@ public class ConversationalToolHandler {
      */
     private void handleToolCallsFromOpenAIStream(List<OpenAIPlatformApiProvider.ToolCall> toolCalls) {
         try {
-            String toolExecutionHeader = "\n\n🔧 **Executing tools...**\n";
+            String toolExecutionHeader = "\n\n[handleToolCallsFromOpenAIStream] 🔧 **Executing tools...**\n";
             javax.swing.SwingUtilities.invokeLater(() -> {
                 userHandler.onUpdate(toolExecutionHeader);
             });
@@ -755,7 +755,7 @@ public class ConversationalToolHandler {
      */
     private void handleToolCallsFromLMStudioStream(List<LMStudioProvider.ToolCall> toolCalls) {
         try {
-            String toolExecutionHeader = "\n\n🔧 **Executing tools...**\n";
+            String toolExecutionHeader = "\n\n[handleToolCallsFromLMStudioStream] 🔧 **Executing tools...**\n";
             javax.swing.SwingUtilities.invokeLater(() -> {
                 userHandler.onUpdate(toolExecutionHeader);
             });
@@ -995,7 +995,7 @@ public class ConversationalToolHandler {
             }
             
             // Update UI with tool calling status
-            String toolExecutionHeader = "🔧 **Executing tools...**\n";
+            String toolExecutionHeader = "[toolExecutionHeader] 🔧 **Executing tools...**\n";
             javax.swing.SwingUtilities.invokeLater(() -> {
                 userHandler.onUpdate(toolExecutionHeader);
             });
