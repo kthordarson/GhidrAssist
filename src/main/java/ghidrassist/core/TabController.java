@@ -1452,6 +1452,7 @@ public class TabController {
         return new LlmApi.LlmResponseHandler() {
             private final StringBuilder responseBuffer = new StringBuilder();
             private final Object bufferLock = new Object();
+            private String lastRenderedContent = null;
 
             @Override
             public void onStart() {
@@ -1514,8 +1515,21 @@ public class TabController {
                         "**Assistant**:\n" + responseBuffer.toString();
                 }
 
+                // Skip re-rendering if nothing changed since the last tick (e.g. while
+                // waiting on a tool call or LLM response) - avoids paying for a full
+                // markdown->HTML pass of the growing transcript every second for no reason.
+                if (content.equals(lastRenderedContent)) {
+                    return;
+                }
+                lastRenderedContent = content;
+
+                // Do the markdown->HTML conversion here, off the EDT. This transcript
+                // only grows over a long multi-round tool-calling session, so this parse
+                // gets more expensive over time - it must not run inside invokeLater,
+                // or it blocks the UI thread for longer and longer as the session goes on.
+                String html = markdownHelper.markdownToHtml(content);
+
                 SwingUtilities.invokeLater(() -> {
-                    String html = markdownHelper.markdownToHtml(content);
                     queryTab.setResponseText(html);
                 });
             }
