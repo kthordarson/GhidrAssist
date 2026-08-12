@@ -212,7 +212,7 @@ public class MCPServerConfig {
      * Create default MCP configuration
      */
     public static MCPServerConfig createGhidrAssistMCPDefault() {
-        MCPServerConfig config = new MCPServerConfig("GhidrAssistMCP", "http://localhost:8080");
+        MCPServerConfig config = new MCPServerConfig("GhidrAssistMCP", "http://localhost:8084");
         config.setDescription("Local GhidrAssistMCP server instance");
         config.setTransport(TransportType.SSE);
         return config;

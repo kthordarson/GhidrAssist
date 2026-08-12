@@ -83,7 +83,7 @@ public class MCPServerDialog extends JDialog {
         JPanel helpPanel = new JPanel(new BorderLayout());
         JTextArea helpText = new JTextArea(
             "Examples:\n" +
-            "• Name: GhidraMCP, URL: http://localhost:8080\n" +
+            "• Name: GhidraMCP, URL: http://localhost:8084\n" +
             "• Name: Local Tools, URL: http://127.0.0.1:3000\n\n" +
             "The server must implement the Model Context Protocol (MCP) specification."
         );
@@ -141,7 +141,7 @@ public class MCPServerDialog extends JDialog {
             (MCPServerConfig.TransportType) transportCombo.getSelectedItem();
         
         if (transport == MCPServerConfig.TransportType.SSE) {
-            urlField.setToolTipText("HTTP(S) URL for Server-Sent Events transport (e.g., http://localhost:8080)");
+            urlField.setToolTipText("HTTP(S) URL for Server-Sent Events transport (e.g., http://localhost:8084)");
         } else {
             urlField.setToolTipText("Command or path for stdio transport");
         }
