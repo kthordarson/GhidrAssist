@@ -46,6 +46,15 @@ public class SchemaVersionDetector {
         // First check explicit version stored in PRAGMA user_version
         int userVersion = getUserVersion();
         if (userVersion > 0) {
+            // A stale user_version can survive an interrupted or partially
+            // initialized database. Do not skip migrations when its anchor
+            // tables are missing.
+            if (userVersion >= VERSION_GRAPHRAG_CORE && !tableExists("graph_nodes")) {
+                return tableExists("GHAnalysis") ? VERSION_BASE : VERSION_EMPTY;
+            }
+            if (userVersion >= VERSION_BASE && !tableExists("GHAnalysis")) {
+                return VERSION_EMPTY;
+            }
             return userVersion;
         }
 

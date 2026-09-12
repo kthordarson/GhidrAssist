@@ -3,6 +3,7 @@ package ghidrassist.core;
 import ghidra.app.services.GoToService;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.listing.Function;
+import ghidra.program.model.listing.Program;
 import ghidra.util.Msg;
 import ghidra.util.task.Task;
 import ghidra.util.task.TaskLauncher;
@@ -659,15 +660,22 @@ public class SemanticGraphController {
      * Handle list view refresh.
      */
     public void handleListViewRefresh(ListViewPanel listView, long address) {
-        if (plugin.getCurrentProgram() == null) {
+        Program program = plugin.getCurrentProgram();
+        if (program == null) {
+            listView.showNotIndexed();
+            return;
+        }
+        String programHash;
+        try {
+            programHash = program.getExecutableSHA256();
+        } catch (Exception e) {
             listView.showNotIndexed();
             return;
         }
 
         SwingUtilities.invokeLater(() -> {
             try {
-                BinaryKnowledgeGraph graph =
-                        analysisDB.getKnowledgeGraph(plugin.getCurrentProgram().getExecutableSHA256());
+                BinaryKnowledgeGraph graph = analysisDB.getKnowledgeGraph(programHash);
 
                 KnowledgeNode node = graph.getNodeByAddress(address);
 
@@ -698,8 +706,7 @@ public class SemanticGraphController {
                 // Update stats
                 int nodeCount = graph.getNodeCount();
                 int edgeCount = graph.getEdgeCount();
-                Long lastIndexed = analysisDB.getKnowledgeGraphLastIndexed(
-                        plugin.getCurrentProgram().getExecutableSHA256());
+                Long lastIndexed = analysisDB.getKnowledgeGraphLastIndexed(programHash);
                 semanticGraphTab.updateStats(nodeCount, edgeCount, 0, formatIndexedTimestamp(lastIndexed));
 
             } catch (Exception e) {
