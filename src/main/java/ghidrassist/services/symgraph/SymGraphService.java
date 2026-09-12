@@ -98,7 +98,7 @@ public class SymGraphService {
                 builder.sslSocketFactory(sslSocketFactory, (javax.net.ssl.X509TrustManager) trustAllCerts[0]);
                 builder.hostnameVerifier((hostname, session) -> true);
 
-                Msg.debug(this, TAG + ": Using insecure SSL for internal network: " + apiUrl);
+                // Msg.debug(this, TAG + ": Using insecure SSL for internal network: " + apiUrl);
             } catch (Exception e) {
                 Msg.warn(this, TAG + ": Failed to configure insecure SSL: " + e.getMessage());
             }

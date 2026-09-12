@@ -241,10 +241,10 @@ public class TabController {
         // Save to database
         try {
             analysisDataService.saveReasoningEffort(level.toLowerCase());
-            Msg.info(this, "Reasoning effort set to: " + level);
+            // Msg.info(this, "Reasoning effort set to: " + level);
         } catch (IllegalStateException e) {
             // No program loaded - just update in-memory config
-            Msg.info(this, "Reasoning effort set to: " + level + " (not saved - no program loaded)");
+            Msg.warn(this, "Reasoning effort set to: " + level + " (not saved - no program loaded)");
         }
     }
 
@@ -287,10 +287,10 @@ public class TabController {
         // Save to database
         try {
             analysisDataService.saveMaxToolCalls(maxToolCalls);
-            Msg.info(this, "Max tool calls per iteration set to: " + maxToolCalls);
+            // Msg.info(this, "Max tool calls per iteration set to: " + maxToolCalls);
         } catch (IllegalStateException e) {
             // No program loaded - just log
-            Msg.info(this, "Max tool calls set to: " + maxToolCalls + " (not saved - no program loaded)");
+            Msg.warn(this, "Max tool calls set to: " + maxToolCalls + " (not saved - no program loaded)");
         }
     }
 
@@ -311,10 +311,10 @@ public class TabController {
     // ==== Code Analysis Operations ====
 
     public void handleExplainFunction() {
-        Msg.info(this, "handleExplainFunction called, isQueryRunning=" + isQueryRunning);
+        // Msg.info(this, "handleExplainFunction called, isQueryRunning=" + isQueryRunning);
 
         if (isQueryRunning) {
-            Msg.info(this, "Query already running, cancelling...");
+            Msg.warn(this, "Query already running, cancelling...");
             cancelCurrentOperation();
             return;
         }
@@ -325,7 +325,7 @@ public class TabController {
             return;
         }
 
-        Msg.info(this, "Explaining function: " + currentFunction.getName());
+        // Msg.info(this, "Explaining function: " + currentFunction.getName());
 
         try {
             setUIState(true, "Stop", "Processing...");
@@ -395,8 +395,7 @@ public class TabController {
 
                     boolean needsSummary = true; // Always run fresh LLM query
 
-                    Msg.info(this, String.format("Semantic analysis: always running fresh query (hasExistingSummary=%b, isStale=%b, isUserEdited=%b)",
-                            node.getLlmSummary() != null && !node.getLlmSummary().isEmpty(), node.isStale(), node.isUserEdited()));
+                    //Msg.info(this, String.format("Semantic analysis: always running fresh query (hasExistingSummary=%b, isStale=%b, isUserEdited=%b)",node.getLlmSummary() != null && !node.getLlmSummary().isEmpty(), node.isStale(), node.isUserEdited()));
 
                     if (needsSummary) {
                         // Create semantic extractor
@@ -405,7 +404,7 @@ public class TabController {
                             throw new Exception("No LLM provider configured. Please configure an API provider in Analysis Options.");
                         }
 
-                        Msg.info(this, "Creating SemanticExtractor with provider: " + providerConfig.getType());
+                        // Msg.info(this, "Creating SemanticExtractor with provider: " + providerConfig.getType());
                         SemanticExtractor semanticExtractor = new SemanticExtractor(
                                 providerConfig.createProvider(), graph, analysisDataService.getContext());
 
@@ -418,7 +417,7 @@ public class TabController {
                         SwingUtilities.invokeLater(() -> explainTab.initializeForStreaming(""));
 
                         // Use streaming summarizeNode method
-                        Msg.info(this, "Calling summarizeNodeStreaming...");
+                        // Msg.info(this, "Calling summarizeNodeStreaming...");
                         semanticExtractor.summarizeNodeStreaming(node, new SemanticExtractor.StreamingSummaryCallback() {
                             // Track previously received content to compute deltas
                             private final StringBuilder previousContent = new StringBuilder();
@@ -426,7 +425,7 @@ public class TabController {
                             @Override
                             public void onStart() {
                                 previousContent.setLength(0);
-                                Msg.info(this, "Streaming started for function explain");
+                                // Msg.info(this, "Streaming started for function explain");
                             }
 
                             @Override
@@ -459,7 +458,7 @@ public class TabController {
 
                             @Override
                             public void onSummaryComplete(String fullSummary, KnowledgeNode updatedNode) {
-                                Msg.info(this, "Streaming complete for function explain");
+                                // Msg.info(this, "Streaming complete for function explain");
 
                                 // Complete streaming
                                 if (currentExplainStreamingRenderer != null) {
@@ -505,7 +504,7 @@ public class TabController {
                         // Return early - the callback will handle completion
                         return;
                     } else {
-                        Msg.info(this, "Skipping semantic analysis - using existing summary");
+                        // Msg.info(this, "Skipping semantic analysis - using existing summary");
                     }
 
                     // Step 4: Save node to graph (only reached if no summary needed)
@@ -571,7 +570,7 @@ public class TabController {
     }
 
     public void handleExplainLine() {
-        Msg.info(this, "handleExplainLine called, isLineQueryRunning=" + isLineQueryRunning);
+        // Msg.info(this, "handleExplainLine called, isLineQueryRunning=" + isLineQueryRunning);
 
         if (isLineQueryRunning) {
             Msg.info(this, "Line query already running, cancelling...");
@@ -602,12 +601,12 @@ public class TabController {
         // Determine view type based on current location
         GhidrAssistPlugin.CodeViewType codeViewType = plugin.checkLastActiveCodeView();
         String viewType = (codeViewType == GhidrAssistPlugin.CodeViewType.IS_DECOMPILER) ? "DECOMPILER" : "DISASSEMBLY";
-        Msg.info(this, "ExplainLine: Detected view type: " + viewType + " (codeViewType=" + codeViewType + ")");
+        // Msg.info(this, "ExplainLine: Detected view type: " + viewType + " (codeViewType=" + codeViewType + ")");
 
         // Check cache first
         AnalysisDB.LineExplanation cached = analysisDB.getLineExplanation(programHash, lineAddress, viewType);
         if (cached != null) {
-            Msg.info(this, "Using cached line explanation for address " + currentAddress);
+            // Msg.info(this, "Using cached line explanation for address " + currentAddress);
             SwingUtilities.invokeLater(() -> {
                 String html = markdownHelper.markdownToHtml(cached.getExplanation());
                 explainTab.setLineExplanationText(html);
@@ -625,19 +624,17 @@ public class TabController {
         // Run in background thread
         Thread lineExplainThread = new Thread(() -> {
             try {
-                Msg.info(this, "ExplainLine: Starting extraction for address " + currentAddress +
-                         " (offset=0x" + Long.toHexString(currentAddress.getOffset()) + ")" +
-                         ", viewType=" + viewType + ", function=" + currentFunction.getName());
+                // Msg.info(this, "ExplainLine: Starting extraction for address " + currentAddress +" (offset=0x" + Long.toHexString(currentAddress.getOffset()) + ")" +                         ", viewType=" + viewType + ", function=" + currentFunction.getName());
 
                 // Extract line context with 5 lines before/after
                 CodeUtils.LineContext lineContext;
 
                 if (viewType.equals("DECOMPILER")) {
-                    Msg.info(this, "ExplainLine: Calling getDecompiledLineWithContext...");
+                    //Msg.info(this, "ExplainLine: Calling getDecompiledLineWithContext...");
                     lineContext = CodeUtils.getDecompiledLineWithContext(
                             currentAddress, ghidra.util.task.TaskMonitor.DUMMY, program, 5);
                 } else {
-                    Msg.info(this, "ExplainLine: Calling getDisassemblyLineWithContext...");
+                    // Msg.info(this, "ExplainLine: Calling getDisassemblyLineWithContext...");
                     lineContext = CodeUtils.getDisassemblyLineWithContext(currentAddress, program, 5);
                 }
 
@@ -660,10 +657,10 @@ public class TabController {
                     return;
                 }
 
-                Msg.info(this, "ExplainLine: SUCCESS - extracted line context:");
-                Msg.info(this, "  currentLine: '" + lineContext.getCurrentLine() + "'");
-                Msg.info(this, "  linesBefore (" + (lineContext.getLinesBefore() != null ? lineContext.getLinesBefore().split("\n").length : 0) + " lines)");
-                Msg.info(this, "  linesAfter (" + (lineContext.getLinesAfter() != null ? lineContext.getLinesAfter().split("\n").length : 0) + " lines)");
+                // Msg.info(this, "ExplainLine: SUCCESS - extracted line context:");
+                // Msg.info(this, "  currentLine: '" + lineContext.getCurrentLine() + "'");
+                // Msg.info(this, "  linesBefore (" + (lineContext.getLinesBefore() != null ? lineContext.getLinesBefore().split("\n").length : 0) + " lines)");
+                // Msg.info(this, "  linesAfter (" + (lineContext.getLinesAfter() != null ? lineContext.getLinesAfter().split("\n").length : 0) + " lines)");
 
                 // Update UI to show we're generating explanation
                 SwingUtilities.invokeLater(() ->
@@ -847,7 +844,7 @@ public class TabController {
     public void handleQuerySubmit(String query, boolean useRAG, boolean useMCP, boolean useAgentic) {
         // If cancellation is in progress, ignore the click
         if (isCancelling) {
-            Msg.info(this, "Cancellation in progress, please wait...");
+            // Msg.info(this, "Cancellation in progress, please wait...");
             return;
         }
 
@@ -1009,7 +1006,7 @@ public class TabController {
 
         java.util.concurrent.CompletableFuture<Void> initFuture;
         if (!toolManager.isInitialized()) {
-            Msg.info(this, "Initializing MCP servers for agentic analysis...");
+            // Msg.info(this, "Initializing MCP servers for agentic analysis...");
             SwingUtilities.invokeLater(() ->
                 queryTab.setResponseText("<html><body>Initializing MCP servers...</body></html>"));
             initFuture = toolManager.initializeServers();
@@ -1479,7 +1476,7 @@ public class TabController {
 
     public void handleLocationUpdate(ProgramLocation loc) {
         if (loc != null && loc.getAddress() != null) {
-            Msg.info(this, "handleLocationUpdate: address=" + loc.getAddress());
+            // Msg.info(this, "handleLocationUpdate: address=" + loc.getAddress());
             explainTab.updateOffset(loc.getAddress().toString());
             updateAnalysisDisplay();
             updateLineExplanationDisplay(loc.getAddress());
@@ -1593,7 +1590,7 @@ public class TabController {
                 programHash, function.getEntryPoint().getOffset()
             );
             if (deletedLines > 0) {
-                Msg.info(this, "Cleared " + deletedLines + " line explanation(s) for function");
+                // Msg.info(this, "Cleared " + deletedLines + " line explanation(s) for function");
             }
 
             explainTab.setExplanationText("");
@@ -1863,8 +1860,7 @@ public class TabController {
 
         // Debug: Log current in-memory config before creating API
         if (currentReasoningConfig != null) {
-            Msg.info(this, "DEBUG: In-memory reasoning config before create: " +
-                currentReasoningConfig.getEffort() + ", enabled=" + currentReasoningConfig.isEnabled());
+            Msg.info(this, "DEBUG: In-memory reasoning config before create: " +                currentReasoningConfig.getEffort() + ", enabled=" + currentReasoningConfig.isEnabled());
         } else {
             Msg.info(this, "DEBUG: In-memory reasoning config is NULL");
         }
@@ -1875,7 +1871,7 @@ public class TabController {
         // Load and apply reasoning configuration from database
         try {
             String savedEffort = analysisDataService.getReasoningEffort();
-            Msg.info(this, "DEBUG: Database returned reasoning effort: " + savedEffort);
+            // Msg.info(this, "DEBUG: Database returned reasoning effort: " + savedEffort);
             // Only override in-memory config if we have a saved non-none value
             // Otherwise keep the current in-memory setting (e.g., when no program is loaded)
             if (savedEffort != null && !savedEffort.equalsIgnoreCase("none")) {
@@ -1886,7 +1882,7 @@ public class TabController {
             }
         } catch (Exception e) {
             // Use current in-memory config if database load fails
-            Msg.info(this, "DEBUG: Database load failed: " + e.getMessage());
+            Msg.warn(this, "err: Database load failed: " + e.getMessage());
         }
 
         // Always set reasoning config (even if NONE) to ensure provider has correct state
@@ -1901,8 +1897,7 @@ public class TabController {
 
         // Verify it was set
         ReasoningConfig verifyConfig = currentLlmApi.getReasoningConfig();
-        Msg.info(this, "DEBUG: Verified LlmApi config after set: " +
-            verifyConfig.getEffort() + ", enabled=" + verifyConfig.isEnabled());
+        // Msg.info(this, "DEBUG: Verified LlmApi config after set: " +            verifyConfig.getEffort() + ", enabled=" + verifyConfig.isEnabled());
 
         return currentLlmApi;
     }
