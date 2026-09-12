@@ -118,7 +118,7 @@ public class ConversationalToolHandler {
         this.contextWindowManager = contextWindowManager;
         this.toolChoiceMode = toolChoiceMode != null ? toolChoiceMode : ToolChoiceMode.AUTO;
     }
-    
+
     /**
      * Start the conversational tool calling session
      */
@@ -148,7 +148,7 @@ public class ConversationalToolHandler {
 
         // Add initial user message
         conversationHistory.addAll(apiClient.createFunctionMessages(userPrompt, toolChoiceMode));
-        
+
         // Start the conversation loop
         userHandler.onStart();
 
@@ -234,7 +234,7 @@ public class ConversationalToolHandler {
             onCompletionCallback.run();
         }
     }
-    
+
     /**
      * Continue the conversation with the current message history.
      * Supports multi-turn tool calling with safety limit (max 10 rounds per iteration).
@@ -908,32 +908,32 @@ public class ConversationalToolHandler {
             if (isCancelled) {
                 return;
             }
-            
+
             Msg.debug(this, "Raw LLM response: " + (rawResponse != null ? rawResponse : "NULL"));
-            
+
             // Validate response is not null or empty
             if (rawResponse == null || rawResponse.trim().isEmpty()) {
                 throw new IllegalArgumentException("LLM response is null or empty");
             }
-            
+
             // Parse the complete response including metadata
             JsonElement responseElement = JsonParser.parseString(rawResponse);
             if (responseElement == null || responseElement.isJsonNull()) {
                 throw new IllegalArgumentException("LLM response parsed to null JSON");
             }
-            
+
             if (!responseElement.isJsonObject()) {
                 throw new IllegalArgumentException("LLM response is not a JSON object: " + responseElement.getClass().getSimpleName());
             }
-            
+
             JsonObject responseObj = responseElement.getAsJsonObject();
-            
+
             // Extract finish_reason from choices array
             String finishReason = extractFinishReason(responseObj);
             JsonObject assistantMessage = extractAssistantMessage(responseObj);
-            
+
             Msg.debug(this, "LLM finish_reason: " + finishReason);
-            
+
             if ("tool_calls".equals(finishReason) || "tool_use".equals(finishReason)) {
                 handleToolCalls(assistantMessage, rawResponse);
             } else if ("stop".equals(finishReason) || "unknown".equals(finishReason)) {
@@ -944,20 +944,20 @@ public class ConversationalToolHandler {
                 Msg.debug(this, "LLM finished with reason: " + finishReason + ", ending conversation");
                 handleConversationEnd(assistantMessage);
             }
-            
+
         } catch (Exception e) {
             Msg.error(this, "Error handling LLM response: " + e.getMessage());
             Msg.error(this, "Response content: " + (rawResponse != null ? rawResponse.substring(0, Math.min(500, rawResponse.length())) : "NULL"));
             isConversationActive = false;
             userHandler.onError(e);
-            
+
             // Notify completion callback
             if (onCompletionCallback != null) {
                 onCompletionCallback.run();
             }
         }
     }
-    
+
     /**
      * Extract finish_reason from the LLM response
      */
@@ -987,7 +987,7 @@ public class ConversationalToolHandler {
             return "unknown";
         }
     }
-    
+
     /**
      * Extract the assistant message from the LLM response
      */
@@ -1024,7 +1024,7 @@ public class ConversationalToolHandler {
             return new JsonObject();
         }
     }
-    
+
     /**
      * Handle tool calls when finish_reason is "tool_calls"
      */
@@ -1038,12 +1038,12 @@ public class ConversationalToolHandler {
                     content = contentElement.getAsString();
                 }
             }
-            
+
             ChatMessage assistantMsg = new ChatMessage(
-                ChatMessage.ChatMessageRole.ASSISTANT, 
+                ChatMessage.ChatMessageRole.ASSISTANT,
                 content
             );
-            
+
             // Add tool calls to the assistant message
             if (assistantMessage.has("tool_calls")) {
                 assistantMsg.setToolCalls(assistantMessage.getAsJsonArray("tool_calls"));
@@ -1058,7 +1058,7 @@ public class ConversationalToolHandler {
             }
 
             conversationHistory.add(assistantMsg);
-            
+
             // Extract tool calls
             JsonArray toolCalls = null;
             if (assistantMessage.has("tool_calls")) {
@@ -1078,13 +1078,13 @@ public class ConversationalToolHandler {
                     toolCalls = contentObj.getAsJsonArray("tool_calls");
                 }
             }
-            
+
             if (toolCalls == null || toolCalls.size() == 0) {
                 Msg.warn(this, "No tool calls found despite finish_reason being tool_calls");
                 handleConversationEnd(assistantMessage);
                 return;
             }
-            
+
             // Accumulate content for max-rounds recovery (non-streaming path)
             if (content != null && !content.trim().isEmpty()) {
                 accumulatedAssistantContent.append(content);
@@ -1102,19 +1102,19 @@ public class ConversationalToolHandler {
 
             // Execute tools and collect results
             executeToolsSequentially(toolCalls, 0, new ArrayList<>());
-            
+
         } catch (Exception e) {
             Msg.error(this, "Error handling tool calls: " + e.getMessage());
             isConversationActive = false;
             userHandler.onError(e);
-            
+
             // Notify completion callback
             if (onCompletionCallback != null) {
                 onCompletionCallback.run();
             }
         }
     }
-    
+
     /**
      * Execute tools sequentially and collect results
      */
@@ -1157,7 +1157,7 @@ public class ConversationalToolHandler {
                 });
             return;
         }
-        
+
         JsonObject toolCall = toolCalls.get(index).getAsJsonObject();
         executeSingleTool(toolCall)
             .thenAccept(result -> {
@@ -1223,7 +1223,7 @@ public class ConversationalToolHandler {
                 return null;
             });
     }
-    
+
     /**
      * Execute a single tool and return the result
      */
@@ -1264,7 +1264,7 @@ public class ConversationalToolHandler {
             return CompletableFuture.failedFuture(e);
         }
     }
-    
+
     /**
      * Add tool results to conversation history
      */
@@ -1298,7 +1298,7 @@ public class ConversationalToolHandler {
             conversationHistory.add(toolMessage);
         }
     }
-    
+
     /**
      * Handle conversation end when finish_reason is "stop"
      */
@@ -1316,7 +1316,7 @@ public class ConversationalToolHandler {
                     accumulatedAssistantContent.append(content);
                 }
             }
-            
+
             // Handle case where content is null or empty
             if (content == null || content.trim().isEmpty()) {
                 if (toolCallRound > 0) {
@@ -1327,23 +1327,23 @@ public class ConversationalToolHandler {
                     Msg.warn(this, "LLM response had no content and no tool calls; returning empty completion");
                 }
             }
-            
+
             String filteredContent = responseProcessor.filterThinkBlocks(content);
-            
+
             // Debug logging for final response
-            Msg.info(this, String.format("Final LLM response: length=%d", 
+            Msg.info(this, String.format("Final LLM response: length=%d",
                 filteredContent != null ? filteredContent.length() : 0));
             if (filteredContent != null && filteredContent.length() > 0) {
-                Msg.info(this, "Final response preview: " + 
+                Msg.info(this, "Final response preview: " +
                     (filteredContent.length() > 200 ? filteredContent.substring(0, 200) + "..." : filteredContent));
             }
-            
+
             // Send only the final LLM response (tool execution messages were already sent individually)
             javax.swing.SwingUtilities.invokeLater(() -> {
                 userHandler.onUpdate("\n" + filteredContent);
                 userHandler.onComplete("\n" + filteredContent);
             });
-            
+
         } catch (Exception e) {
             Msg.error(this, "Error handling conversation end: " + e.getMessage());
             // Provide fallback response
@@ -1352,13 +1352,13 @@ public class ConversationalToolHandler {
                 userHandler.onComplete("Error processing response");
             });
         }
-        
+
         // Notify completion callback
         if (onCompletionCallback != null) {
             onCompletionCallback.run();
         }
     }
-    
+
     /**
      * Extract tool name from tool call
      */
@@ -1375,7 +1375,7 @@ public class ConversationalToolHandler {
         Msg.error(this, "No tool name found in tool call: " + toolCall.toString());
         throw new IllegalArgumentException("No tool name found in tool call: " + toolCall.toString());
     }
-    
+
     /**
      * Extract arguments from tool call
      */
@@ -1415,7 +1415,7 @@ public class ConversationalToolHandler {
 
         return arguments;
     }
-    
+
     /**
      * Extract tool call ID from tool call.
      * Handles null, JsonNull, and empty string cases that can occur when
@@ -1442,7 +1442,7 @@ public class ConversationalToolHandler {
         }
         return "call_fallback_" + toolName + "_" + System.currentTimeMillis();
     }
-    
+
     /**
      * Trim conversation history to prevent token overflow.
      * Uses LLM-based summarization (with extractive fallback) to preserve context
@@ -1680,28 +1680,28 @@ public class ConversationalToolHandler {
         }
         return sb.toString();
     }
-    
+
     /**
      * Find a safe point to start trimming that doesn't break tool call/result pairs
      */
     private int findSafeTrimPoint() {
         int targetSize = Math.max(MIN_RECENT_MESSAGES, MAX_CONVERSATION_HISTORY - 2);
         int startFromEnd = Math.min(targetSize, conversationHistory.size() - 1);
-        
+
         // Start from desired point and look backwards for a safe boundary
         for (int lookback = 0; lookback < startFromEnd; lookback++) {
             int candidateIndex = conversationHistory.size() - startFromEnd + lookback;
-            
+
             // Check if this is a safe cut point (not in middle of tool call/result sequence)
             if (isSafeTrimPoint(candidateIndex)) {
                 return candidateIndex;
             }
         }
-        
+
         // Fallback: keep last half of conversation
         return Math.max(1, conversationHistory.size() / 2);
     }
-    
+
     /**
      * Check if we can safely trim at this point without breaking tool call/result pairs.
      * Scans backwards to ensure no preceding assistant message has tool results
@@ -1928,16 +1928,16 @@ public class ConversationalToolHandler {
         if (arguments == null || arguments.size() == 0) {
             return "";
         }
-        
+
         StringBuilder params = new StringBuilder();
         boolean first = true;
-        
+
         for (String key : arguments.keySet()) {
             if (!first) {
                 params.append(", ");
             }
             first = false;
-            
+
             JsonElement value = arguments.get(key);
             if (value.isJsonPrimitive()) {
                 String strValue = value.getAsString();
@@ -1952,63 +1952,16 @@ public class ConversationalToolHandler {
                 params.append(key).append("=").append(value.toString());
             }
         }
-        
+
         return params.toString();
     }
-    
+
     /**
-     * Execute tool with proper Ghidra transaction handling via ToolRegistry
-     * Run transaction on Swing EDT to match how Actions tab works
+     * Execute tool via ToolRegistry. Tools manage their own transactions internally
+     * if they mutate program state, avoiding EDT blocking and unnecessary read transactions.
      */
     private CompletableFuture<ToolResult> executeToolWithTransaction(String toolName, JsonObject arguments) {
-        CompletableFuture<ToolResult> future = new CompletableFuture<>();
-
-        ghidra.program.model.listing.Program program = apiClient.getPlugin().getCurrentProgram();
-
-        if (program == null) {
-            // If no program is loaded, execute without transaction
-            return toolRegistry.execute(toolName, arguments);
-        }
-
-        // Execute tool call on background thread to avoid blocking EDT
-        CompletableFuture.runAsync(() -> {
-            // Start transaction on EDT
-            final int[] transaction = new int[1];
-            try {
-                javax.swing.SwingUtilities.invokeAndWait(() -> {
-                    transaction[0] = program.startTransaction("Tool: " + toolName);
-                });
-            } catch (Exception e) {
-                throw new RuntimeException("Failed to start transaction", e);
-            }
-
-            // Execute tool via ToolRegistry
-            toolRegistry.execute(toolName, arguments)
-                .thenAccept(result -> {
-                    // End transaction on EDT
-                    javax.swing.SwingUtilities.invokeLater(() -> {
-                        boolean success = result.isSuccess();
-                        program.endTransaction(transaction[0], success);
-                        future.complete(result);
-                    });
-                })
-                .exceptionally(throwable -> {
-                    // End transaction on EDT with failure
-                    javax.swing.SwingUtilities.invokeLater(() -> {
-                        program.endTransaction(transaction[0], false);
-                        Msg.error(this, "Tool execution failed: " + throwable.getMessage());
-                        future.complete(ToolResult.error("Tool execution failed: " + throwable.getMessage()));
-                    });
-                    return null;
-                });
-
-        }).exceptionally(throwable -> {
-            Msg.error(this, "Failed to start transaction: " + throwable.getMessage());
-            future.complete(ToolResult.error("Failed to start transaction: " + throwable.getMessage()));
-            return null;
-        });
-
-        return future;
+        return toolRegistry.execute(toolName, arguments);
     }
 
     /**
