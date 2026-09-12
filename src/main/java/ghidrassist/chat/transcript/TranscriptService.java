@@ -575,12 +575,10 @@ public class TranscriptService implements ToolExecutionObserver {
     }
 
     @Override
-    public void onToolCallStarted(int sessionId, String programHash, String correlationId,
-                                  Tool tool, JsonObject args) {
+    public void onToolCallStarted(int sessionId, String programHash, String correlationId, Tool tool, JsonObject args) {
         Long parentId = findMostRecentEventId(sessionId, correlationId, TranscriptEventKind.TOOL_CALL_REQUESTED);
-        appendEvent(sessionId, programHash, correlationId, parentId, TranscriptEventKind.TOOL_CALL_STARTED,
-            "tool", tool.getName(), "Executing...", "Executing...",
-            buildToolMetadata(sessionId, tool, args), null, null, null, null, true);
+        appendEvent(sessionId, programHash, correlationId, parentId, TranscriptEventKind.TOOL_CALL_STARTED, "tool", tool.getName(), "[otcs] Executing...", "[otcs] Executing...", buildToolMetadata(sessionId, tool, args), null, null, null, null, true);
+
     }
 
     @Override
