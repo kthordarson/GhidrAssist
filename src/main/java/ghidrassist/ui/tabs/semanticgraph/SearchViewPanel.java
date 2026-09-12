@@ -406,7 +406,7 @@ public class SearchViewPanel extends JPanel {
     private void executeQuery() {
         String queryType = queryTypeGroup.getSelection().getActionCommand();
         executeButton.setEnabled(false);
-        executeButton.setText("Executing...");
+        executeButton.setText("[seq] Executing...");
 
         // Build arguments based on query type
         JsonObject args = buildQueryArguments(queryType);
