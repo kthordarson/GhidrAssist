@@ -189,13 +189,13 @@ public class CodeUtils {
             ghidra.util.Msg.warn(CodeUtils.class, "getDecompiledLineWithContext: No function at address " + address);
             return null;
         }
-        ghidra.util.Msg.info(CodeUtils.class, "getDecompiledLineWithContext: function=" + function.getName());
+        //ghidra.util.Msg.info(CodeUtils.class, "getDecompiledLineWithContext: function=" + function.getName());
 
         DecompInterface decompiler = new DecompInterface();
         decompiler.openProgram(program);
 
         try {
-            ghidra.util.Msg.info(CodeUtils.class, "getDecompiledLineWithContext: Decompiling function...");
+            // ghidra.util.Msg.info(CodeUtils.class, "getDecompiledLineWithContext: Decompiling function...");
             DecompileResults results = decompiler.decompileFunction(function, 60, monitor);
             if (results == null) {
                 ghidra.util.Msg.warn(CodeUtils.class, "getDecompiledLineWithContext: Decompile results is null");
@@ -211,26 +211,25 @@ public class CodeUtils {
                 ghidra.util.Msg.warn(CodeUtils.class, "getDecompiledLineWithContext: No decompiled code");
                 return null;
             }
-            ghidra.util.Msg.info(CodeUtils.class, "getDecompiledLineWithContext: Got decompiled code, length=" + fullCode.length());
+            // ghidra.util.Msg.info(CodeUtils.class, "getDecompiledLineWithContext: Got decompiled code, length=" + fullCode.length());
 
             // Split code into lines
             String[] lines = fullCode.split("\n");
-            ghidra.util.Msg.info(CodeUtils.class, "getDecompiledLineWithContext: Total lines=" + lines.length);
+            // ghidra.util.Msg.info(CodeUtils.class, "getDecompiledLineWithContext: Total lines=" + lines.length);
 
             // Get the specific line at this address using token analysis
             ClangTokenGroup tokens = results.getCCodeMarkup();
             int targetLineNum = -1;
 
             if (tokens != null) {
-                ghidra.util.Msg.info(CodeUtils.class, "getDecompiledLineWithContext: Got tokens, finding closest token...");
+                // ghidra.util.Msg.info(CodeUtils.class, "getDecompiledLineWithContext: Got tokens, finding closest token...");
                 // Try to find a token at or near this address
                 ClangToken closestToken = findClosestTokenForAddress(tokens, address);
                 if (closestToken != null) {
-                    ghidra.util.Msg.info(CodeUtils.class, "getDecompiledLineWithContext: Found closestToken: '" +
-                        closestToken.getText() + "' at addr=" + closestToken.getMinAddress());
+                    // ghidra.util.Msg.info(CodeUtils.class, "getDecompiledLineWithContext: Found closestToken: '" +closestToken.getText() + "' at addr=" + closestToken.getMinAddress());
                     // Get line number by finding the token's line in the decompiled output
                     targetLineNum = getLineNumberFromToken(closestToken, lines);
-                    ghidra.util.Msg.info(CodeUtils.class, "getDecompiledLineWithContext: targetLineNum from token=" + targetLineNum);
+                    // ghidra.util.Msg.info(CodeUtils.class, "getDecompiledLineWithContext: targetLineNum from token=" + targetLineNum);
                 } else {
                     ghidra.util.Msg.warn(CodeUtils.class, "getDecompiledLineWithContext: No closest token found");
                 }
@@ -241,7 +240,7 @@ public class CodeUtils {
             // Fallback: if token-based lookup failed, use a simple heuristic
             // Find a line that might correspond to this address based on function structure
             if (targetLineNum < 0) {
-                ghidra.util.Msg.info(CodeUtils.class, "getDecompiledLineWithContext: Using fallback heuristic");
+                // ghidra.util.Msg.info(CodeUtils.class, "getDecompiledLineWithContext: Using fallback heuristic");
                 // Default to first non-signature line (typically line 2 or 3 in decompiled output)
                 targetLineNum = Math.min(2, lines.length - 1);
                 // Try to find a line with actual code (not just braces or whitespace)
@@ -252,7 +251,7 @@ public class CodeUtils {
                         break;
                     }
                 }
-                ghidra.util.Msg.info(CodeUtils.class, "getDecompiledLineWithContext: Fallback targetLineNum=" + targetLineNum);
+                // ghidra.util.Msg.info(CodeUtils.class, "getDecompiledLineWithContext: Fallback targetLineNum=" + targetLineNum);
             }
 
             if (targetLineNum < 0 || targetLineNum >= lines.length) {
@@ -262,8 +261,7 @@ public class CodeUtils {
             }
 
             String currentLine = lines[targetLineNum];
-            ghidra.util.Msg.info(CodeUtils.class, "getDecompiledLineWithContext: Selected line " +
-                targetLineNum + ": '" + currentLine + "'");
+            // ghidra.util.Msg.info(CodeUtils.class, "getDecompiledLineWithContext: Selected line " +targetLineNum + ": '" + currentLine + "'");
 
             // Gather context lines before
             StringBuilder beforeBuilder = new StringBuilder();
@@ -279,7 +277,7 @@ public class CodeUtils {
                 afterBuilder.append(lines[i]).append("\n");
             }
 
-            ghidra.util.Msg.info(CodeUtils.class, "getDecompiledLineWithContext: SUCCESS - returning LineContext");
+            // ghidra.util.Msg.info(CodeUtils.class, "getDecompiledLineWithContext: SUCCESS - returning LineContext");
             return new LineContext(
                 currentLine.trim(),
                 beforeBuilder.toString(),
@@ -365,15 +363,14 @@ public class CodeUtils {
         if (lineParent != null) {
             // ClangLine.getLineNumber() returns 1-indexed line number
             int lineNum = lineParent.getLineNumber();
-            ghidra.util.Msg.info(CodeUtils.class, "getLineNumberFromToken: ClangLine.getLineNumber()=" + lineNum);
+            // ghidra.util.Msg.info(CodeUtils.class, "getLineNumberFromToken: ClangLine.getLineNumber()=" + lineNum);
 
             // Convert to 0-indexed and validate
             int zeroIndexed = lineNum - 1;
             if (zeroIndexed >= 0 && zeroIndexed < lines.length) {
                 return zeroIndexed;
             }
-            ghidra.util.Msg.warn(CodeUtils.class, "getLineNumberFromToken: lineNum " + lineNum +
-                " out of range (lines.length=" + lines.length + ")");
+            ghidra.util.Msg.warn(CodeUtils.class, "getLineNumberFromToken: lineNum " + lineNum +                " out of range (lines.length=" + lines.length + ")");
         } else {
             ghidra.util.Msg.warn(CodeUtils.class, "getLineNumberFromToken: lineParent is null");
         }
@@ -381,10 +378,10 @@ public class CodeUtils {
         // Fallback: try to match the token text in the lines
         String tokenText = token.getText();
         if (tokenText != null && !tokenText.trim().isEmpty()) {
-            ghidra.util.Msg.info(CodeUtils.class, "getLineNumberFromToken: Fallback - searching for token text: '" + tokenText + "'");
+            // ghidra.util.Msg.info(CodeUtils.class, "getLineNumberFromToken: Fallback - searching for token text: '" + tokenText + "'");
             for (int i = 0; i < lines.length; i++) {
                 if (lines[i].contains(tokenText.trim())) {
-                    ghidra.util.Msg.info(CodeUtils.class, "getLineNumberFromToken: Found token text at line " + i);
+                    // ghidra.util.Msg.info(CodeUtils.class, "getLineNumberFromToken: Found token text at line " + i);
                     return i;
                 }
             }
@@ -478,8 +475,8 @@ public class CodeUtils {
      * @return A formatted string representation of the instruction
      */
     private static String formatInstruction(Instruction instruction) {
-        return String.format("%s  %s", 
-            instruction.getAddressString(true, true), 
+        return String.format("%s  %s",
+            instruction.getAddressString(true, true),
             instruction.toString());
     }
 }
