@@ -38,7 +38,7 @@ public class MCPToolManager implements ToolProvider {
     private final Map<String, MCPTool> allTools = new ConcurrentHashMap<>();
     private MCPToolManagerHandler handler;
     private volatile boolean initialized = false;
-    
+
     /**
      * Interface for handling tool manager events
      */
@@ -101,7 +101,7 @@ public class MCPToolManager implements ToolProvider {
 
         // Use the original tool name (without server prefix) when calling the MCP server
         String originalToolName = tool.getName();
-        Msg.debug(this, "Executing MCP tool: " + name + " (original: " + originalToolName + ") via server: " + tool.getServerName());
+        // Msg.debug(this, "Executing MCP tool: " + name + " (original: " + originalToolName + ") via server: " + tool.getServerName());
         return client.executeTool(originalToolName, args)
                 .thenApply(result -> {
                     String content = result != null ? result.toString() : "";
@@ -146,10 +146,10 @@ public class MCPToolManager implements ToolProvider {
 
         // Use the original tool name (without server prefix) when calling the MCP server
         String originalToolName = tool.getName();
-        Msg.debug(this, "MCPToolManager delegating to client: " + tool.getServerName() + " for tool: " + originalToolName);
+        // Msg.debug(this, "MCPToolManager delegating to client: " + tool.getServerName() + " for tool: " + originalToolName);
         return client.executeTool(originalToolName, arguments)
             .thenApply(result -> {
-                Msg.debug(this, "MCPToolManager received result for tool: " + toolName);
+                // Msg.debug(this, "MCPToolManager received result for tool: " + toolName);
                 String content = result != null ? result.toString() : "";
                 return MCPToolResult.success(content);
             })
@@ -158,7 +158,7 @@ public class MCPToolManager implements ToolProvider {
                 return MCPToolResult.error(throwable.getMessage());
             });
     }
-    
+
     // ==================== MCP Server Connection Management ====================
 
     /**
@@ -169,7 +169,7 @@ public class MCPToolManager implements ToolProvider {
         return CompletableFuture.runAsync(() -> {
             // Ensure all work happens off the EDT
             List<MCPServerConfig> enabledServers = MCPServerRegistry.getInstance().getEnabledServers();
-            Msg.info(this, String.format("Starting initialization of %d enabled MCP servers", enabledServers.size()));
+            // Msg.info(this, String.format("Starting initialization of %d enabled MCP servers", enabledServers.size()));
 
             List<CompletableFuture<Void>> connectionFutures = new ArrayList<>();
 
@@ -184,7 +184,7 @@ public class MCPToolManager implements ToolProvider {
                 CompletableFuture.allOf(connectionFutures.toArray(new CompletableFuture[0])).get();
 
                 initialized = true;
-                Msg.info(this, String.format("Initialized %d MCP servers", clients.size()));
+                // Msg.info(this, String.format("Initialized %d MCP servers", clients.size()));
 
                 // Notify on EDT for UI updates
                 javax.swing.SwingUtilities.invokeLater(() -> notifyToolsUpdated());
@@ -195,7 +195,7 @@ public class MCPToolManager implements ToolProvider {
             }
         });
     }
-    
+
     /**
      * Connect to a specific server
      * This method runs all network operations on background threads
@@ -204,11 +204,11 @@ public class MCPToolManager implements ToolProvider {
         if (!config.isEnabled()) {
             return CompletableFuture.completedFuture(null);
         }
-        
+
         return CompletableFuture.runAsync(() -> {
             MCPClientAdapter client = new MCPClientAdapter(config);
             client.setHandler(new ClientHandler(config.getName()));
-            
+
             try {
                 // Connect and wait for completion off the EDT
                 client.connect().get();
@@ -220,7 +220,7 @@ public class MCPToolManager implements ToolProvider {
             }
         });
     }
-    
+
     /**
      * Disconnect from a specific server
      */
@@ -231,50 +231,50 @@ public class MCPToolManager implements ToolProvider {
                 try {
                     // Disconnect and wait for completion
                     client.disconnect().get();
-                    
+
                     // Remove tools from this server
-                    allTools.entrySet().removeIf(entry -> 
+                    allTools.entrySet().removeIf(entry ->
                         entry.getValue().getServerName().equals(serverName));
-                    
+
                     // Notify on EDT for UI updates
                     javax.swing.SwingUtilities.invokeLater(() -> notifyToolsUpdated());
-                    
+
                 } catch (Exception e) {
                     Msg.error(this, "Error disconnecting from " + serverName + ": " + e.getMessage());
                 }
             }
         });
     }
-    
+
     /**
      * Disconnect from all servers
      */
     public CompletableFuture<Void> disconnectAll() {
         return CompletableFuture.runAsync(() -> {
             List<CompletableFuture<Void>> disconnectFutures = new ArrayList<>();
-            
+
             for (String serverName : new ArrayList<>(clients.keySet())) {
                 disconnectFutures.add(disconnectFromServer(serverName));
             }
-            
+
             try {
                 // Wait for all disconnections to complete
                 CompletableFuture.allOf(disconnectFutures.toArray(new CompletableFuture[0])).get();
-                
+
                 clients.clear();
                 allTools.clear();
-                
+
                 // Notify on EDT for UI updates
                 javax.swing.SwingUtilities.invokeLater(() -> notifyToolsUpdated());
-                
-                Msg.info(this, "Disconnected from all MCP servers");
-                
+
+                // Msg.info(this, "Disconnected from all MCP servers");
+
             } catch (Exception e) {
                 Msg.error(this, "Error disconnecting from servers: " + e.getMessage());
             }
         });
     }
-    
+
     // ==================== Parallel Tool Execution ====================
 
     /**
@@ -356,7 +356,7 @@ public class MCPToolManager implements ToolProvider {
                         return Integer.compare(orderA, orderB);
                     });
 
-                    Msg.debug(this, String.format("Parallel execution complete: %d tools", results.size()));
+                    // Msg.debug(this, String.format("Parallel execution complete: %d tools", results.size()));
 
                     // Extract MCPToolResults in correct order
                     return results.stream()
@@ -455,28 +455,28 @@ public class MCPToolManager implements ToolProvider {
             })
             .collect(Collectors.toList());
     }
-    
+
     /**
      * Find tool by name
      */
     public MCPTool findTool(String toolName) {
         return allTools.get(toolName.toLowerCase());
     }
-    
+
     /**
      * Check if the tool manager has been initialized
      */
     public boolean isInitialized() {
         return initialized;
     }
-    
+
     /**
      * Check if any servers are connected
      */
     public boolean hasConnectedServers() {
         return clients.values().stream().anyMatch(MCPClientAdapter::isReady);
     }
-    
+
     /**
      * Get status info for all servers
      */
@@ -484,15 +484,15 @@ public class MCPToolManager implements ToolProvider {
         if (clients.isEmpty()) {
             return "No MCP servers configured";
         }
-        
+
         long connectedCount = clients.values().stream()
             .filter(MCPClientAdapter::isReady)
             .count();
-        
-        return String.format("%d/%d servers connected (%d tools)", 
+
+        return String.format("%d/%d servers connected (%d tools)",
                            connectedCount, clients.size(), allTools.size());
     }
-    
+
     /**
      * Get connected servers info
      */
@@ -502,7 +502,7 @@ public class MCPToolManager implements ToolProvider {
             .map(Map.Entry::getKey)
             .collect(Collectors.toList());
     }
-    
+
     /**
      * Refresh connections to all servers
      */
@@ -511,17 +511,17 @@ public class MCPToolManager implements ToolProvider {
             try {
                 // Disconnect all servers first
                 disconnectAll().get();
-                
+
                 // Then reinitialize
                 initializeServers().get();
-                
+
             } catch (Exception e) {
                 Msg.error(this, "Error refreshing MCP connections: " + e.getMessage());
                 throw new RuntimeException("Failed to refresh MCP connections", e);
             }
         });
     }
-    
+
     /**
      * Notify handler of tools update
      */
@@ -530,24 +530,24 @@ public class MCPToolManager implements ToolProvider {
             handler.onToolsUpdated(getAllMCPTools());
         }
     }
-    
+
     /**
      * Client event handler
      */
     private class ClientHandler implements MCPClientAdapter.MCPClientHandler {
         private final String serverName;
-        
+
         public ClientHandler(String serverName) {
             this.serverName = serverName;
         }
-        
+
         @Override
         public void onConnected(MCPClientAdapter client) {
             if (handler != null) {
                 handler.onServerConnected(serverName);
             }
         }
-        
+
         @Override
         public void onDisconnected(MCPClientAdapter client) {
             // Remove tools from this server (keys are prefixed with serverName.toLowerCase()_)
@@ -563,7 +563,7 @@ public class MCPToolManager implements ToolProvider {
                 }
             });
         }
-        
+
         @Override
         public void onToolsDiscovered(MCPClientAdapter client, List<MCPTool> tools) {
             // Add tools from this server with server name prefix
@@ -573,7 +573,7 @@ public class MCPToolManager implements ToolProvider {
                 String prefixedName = prefix + tool.getName().toLowerCase();
                 // Store with prefixed name, but keep original tool reference
                 allTools.put(prefixedName, tool);
-                Msg.debug(MCPToolManager.this, "Registered MCP tool: " + prefixedName);
+                // Msg.debug(MCPToolManager.this, "Registered MCP tool: " + prefixedName);
             }
 
             // Notify on EDT for UI updates

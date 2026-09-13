@@ -54,8 +54,7 @@ public class ToolRegistry implements ToolExecutor {
             if (currentProgram != null) {
                 provider.setContext(currentProgram);
             }
-            Msg.info(this, "Registered tool provider: " + provider.getProviderName() +
-                    " with " + provider.getTools().size() + " tools");
+            // Msg.info(this, "Registered tool provider: " + provider.getProviderName() +" with " + provider.getTools().size() + " tools");
         }
     }
 
@@ -144,7 +143,7 @@ public class ToolRegistry implements ToolExecutor {
         if (executionObserver != null && sessionId > 0) {
             executionObserver.onToolCallRequested(sessionId, programHash, correlationId, tool, args);
         }
-        Msg.info(this, "Tool requested: " + toolName + " (" + tool.getSource() + ")");
+        // Msg.info(this, "Tool requested: " + toolName + " (" + tool.getSource() + ")");
 
         CompletableFuture<ToolApprovalService.ApprovalOutcome> approvalFuture =
             approvalService != null
@@ -164,8 +163,8 @@ public class ToolRegistry implements ToolExecutor {
 
             for (ToolProvider provider : providers) {
                 if (provider.handlesTool(toolName)) {
-                    Msg.debug(this, "Routing tool '" + toolName + "' to provider: " + provider.getProviderName());
-                    Msg.info(this, "Executing tool '" + toolName + "' via provider " + provider.getProviderName());
+                    // Msg.debug(this, "Routing tool '" + toolName + "' to provider: " + provider.getProviderName());
+                    // Msg.info(this, "Executing tool '" + toolName + "' via provider " + provider.getProviderName());
                     if (executionObserver != null && sessionId > 0) {
                         executionObserver.onToolCallStarted(sessionId, programHash, correlationId, tool, args);
                     }
@@ -184,7 +183,7 @@ public class ToolRegistry implements ToolExecutor {
                                 if (safeResult.isError()) {
                                     Msg.warn(this, "Tool returned error: " + toolName + " - " + safeResult.getErrorMessage());
                                 } else {
-                                    Msg.info(this, "Tool completed: " + toolName);
+                                    // Msg.info(this, "Tool completed: " + toolName);
                                 }
                                 if (executionObserver != null && sessionId > 0) {
                                     if (safeResult.isError()) {
@@ -234,7 +233,7 @@ public class ToolRegistry implements ToolExecutor {
                 ((NativeToolManager) provider).setAddress(currentAddress);
             }
         }
-        Msg.debug(this, "Updated program context for " + providers.size() + " providers");
+        // Msg.debug(this, "Updated program context for " + providers.size() + " providers");
     }
 
     /**
@@ -248,7 +247,7 @@ public class ToolRegistry implements ToolExecutor {
                 ((NativeToolManager) provider).setAddress(address);
             }
         }
-        Msg.debug(this, "Updated address context: " + (address != null ? address.toString() : "null"));
+        // Msg.debug(this, "Updated address context: " + (address != null ? address.toString() : "null"));
     }
 
     /**
@@ -265,7 +264,7 @@ public class ToolRegistry implements ToolExecutor {
                 ((NativeToolManager) provider).setFullContext(program, address);
             }
         }
-        Msg.debug(this, "Updated full context for " + providers.size() + " providers");
+        // Msg.debug(this, "Updated full context for " + providers.size() + " providers");
     }
 
     /**
@@ -311,8 +310,7 @@ public class ToolRegistry implements ToolExecutor {
             if (!uniqueTools.containsKey(tool.getName())) {
                 uniqueTools.put(tool.getName(), tool);
             } else {
-                Msg.debug(this, "Skipping duplicate tool: " + tool.getName() +
-                        " (already registered from another provider)");
+                Msg.debug(this, "Skipping duplicate tool: " + tool.getName() + " (already registered from another provider)");
             }
         }
 
