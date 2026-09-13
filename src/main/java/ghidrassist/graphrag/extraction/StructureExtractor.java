@@ -107,7 +107,7 @@ public class StructureExtractor {
     public void setIncrementalMode(boolean incremental) {
         this.incrementalMode = incremental;
         if (incremental) {
-            Msg.info(this, "StructureExtractor: incremental mode enabled (preserving semantic data)");
+            // Msg.info(this, "StructureExtractor: incremental mode enabled (preserving semantic data)");
         }
     }
 
@@ -141,7 +141,7 @@ public class StructureExtractor {
 
             // Check for cancellation between phases
             if (monitor.isCancelled()) {
-                Msg.info(this, "Extraction cancelled after function extraction");
+                // Msg.info(this, "Extraction cancelled after function extraction");
                 return new ExtractionResult(functionsExtracted.get(), callEdgesCreated.get(),
                         refEdgesCreated.get(), vulnEdgesCreated.get(),
                         System.currentTimeMillis() - startTime);
@@ -152,7 +152,7 @@ public class StructureExtractor {
             createBinaryNode();
 
             if (monitor.isCancelled()) {
-                Msg.info(this, "Extraction cancelled after binary node creation");
+                // Msg.info(this, "Extraction cancelled after binary node creation");
                 return new ExtractionResult(functionsExtracted.get(), callEdgesCreated.get(),
                         refEdgesCreated.get(), vulnEdgesCreated.get(),
                         System.currentTimeMillis() - startTime);
@@ -170,8 +170,7 @@ public class StructureExtractor {
         }
 
         long elapsed = System.currentTimeMillis() - startTime;
-        Msg.info(this, String.format("Structure extraction completed in %dms: %d functions, %d call edges, %d ref edges, %d vuln edges",
-                elapsed, functionsExtracted.get(), callEdgesCreated.get(), refEdgesCreated.get(), vulnEdgesCreated.get()));
+        // Msg.info(this, String.format("Structure extraction completed in %dms: %d functions, %d call edges, %d ref edges, %d vuln edges", elapsed, functionsExtracted.get(), callEdgesCreated.get(), refEdgesCreated.get(), vulnEdgesCreated.get()));
 
         return new ExtractionResult(functionsExtracted.get(), callEdgesCreated.get(), refEdgesCreated.get(), vulnEdgesCreated.get(), elapsed);
     }
@@ -257,21 +256,21 @@ public class StructureExtractor {
             boolean hasInferredCalls = graph.hasEdgesOfType(node.getId(), EdgeType.INFERRED_CALLS);
 
             if (!hasReferencesEdges) {
-                Msg.debug(this, "Updating REFERENCES edges for: " + function.getName());
+                // Msg.debug(this, "Updating REFERENCES edges for: " + function.getName());
                 extractFunctionReferences(function, node);
             }
 
             if (!hasInferredCalls) {
-                Msg.debug(this, "Updating INFERRED_CALLS edges for: " + function.getName());
+                // Msg.debug(this, "Updating INFERRED_CALLS edges for: " + function.getName());
                 inferFunctionCalls(function, node.getId(), node.getRawContent());
             }
 
             if (!hasVulnerableEdges) {
-                Msg.debug(this, "Updating CALLS_VULNERABLE edges for: " + function.getName());
+                // Msg.debug(this, "Updating CALLS_VULNERABLE edges for: " + function.getName());
                 extractFunctionVulnerableCalls(function, node);
             }
         } catch (Exception e) {
-            Msg.debug(this, "Failed to update edges for " + function.getName() + ": " + e.getMessage());
+            Msg.warn(this, "Failed to update edges for " + function.getName() + ": " + e.getMessage());
         }
     }
 
@@ -290,7 +289,7 @@ public class StructureExtractor {
         // Check cache first
         String cached = graph.getCachedDecompiledCode(function.getEntryPoint().getOffset());
         if (cached != null) {
-            Msg.debug(this, "Cache hit for function: " + function.getName());
+            // Msg.debug(this, "Cache hit for function: " + function.getName());
             return cached;
         }
 
@@ -317,7 +316,7 @@ public class StructureExtractor {
                 node.setRawContent(code);
                 graph.upsertNode(node);
 
-                Msg.debug(this, "Cached decompiled code for: " + function.getName());
+                // Msg.debug(this, "Cached decompiled code for: " + function.getName());
                 return code;
             }
         } catch (Exception e) {
@@ -345,8 +344,7 @@ public class StructureExtractor {
         }
 
         int actualTotal = functionsToProcess.size();
-        Msg.info(this, String.format("Starting parallel extraction of %d functions using %d threads",
-                actualTotal, DEFAULT_THREAD_COUNT));
+        // Msg.info(this, String.format("Starting parallel extraction of %d functions using %d threads",                actualTotal, DEFAULT_THREAD_COUNT));
 
         // Initialize progress monitor with correct total
         monitor.initialize(actualTotal);
@@ -387,7 +385,7 @@ public class StructureExtractor {
                             monitor.setMessage(String.format("Extracting functions... %d/%d", current, actualTotal));
                         }
                     } catch (Exception e) {
-                        Msg.debug(StructureExtractor.this, "Error extracting " + func.getName() + ": " + e.getMessage());
+                        Msg.warn(StructureExtractor.this, "Error extracting " + func.getName() + ": " + e.getMessage());
                     }
                 }));
             }
@@ -413,7 +411,7 @@ public class StructureExtractor {
                         wasCancelled = true;
                         break outerLoop;
                     } catch (ExecutionException e) {
-                        Msg.debug(this, "Task failed: " + e.getCause().getMessage());
+                        Msg.warn(this, "Task failed: " + e.getCause().getMessage());
                         break; // Move to next future
                     }
                 }
@@ -421,7 +419,7 @@ public class StructureExtractor {
 
             // If cancelled, cancel all pending futures
             if (wasCancelled) {
-                Msg.info(this, "Cancellation requested - stopping extraction...");
+                // Msg.info(this, "Cancellation requested - stopping extraction...");
                 for (Future<?> future : futures) {
                     future.cancel(true);
                 }
@@ -446,7 +444,7 @@ public class StructureExtractor {
         // Flush any remaining batched items to database
         graph.flushAllBatches();
 
-        Msg.info(this, String.format("Parallel extraction complete: %d functions processed", processed.get()));
+        // Msg.info(this, String.format("Parallel extraction complete: %d functions processed", processed.get()));
     }
 
     /**
@@ -503,7 +501,7 @@ public class StructureExtractor {
                 functionsExtracted.incrementAndGet();
             }
         } catch (Exception e) {
-            Msg.debug(this, "Failed to extract function " + function.getName() + ": " + e.getMessage());
+            Msg.warn(this, "Failed to extract function " + function.getName() + ": " + e.getMessage());
         }
     }
 
@@ -531,8 +529,7 @@ public class StructureExtractor {
                         String code = decompiledFunc.getC();
                         if (code != null && !code.isEmpty()) {
                             if (attempt > 1) {
-                                Msg.info(this, "Decompilation succeeded on attempt " + attempt +
-                                    " for: " + function.getName());
+                                // Msg.info(this, "Decompilation succeeded on attempt " + attempt + " for: " + function.getName());
                             }
                             return code;
                         }
@@ -606,12 +603,12 @@ public class StructureExtractor {
                 applyFunctionCodeFields(node, signature, decompiledCode, disassembly, content);
                 if (contentChanged) {
                     node.markStale();
-                    Msg.debug(this, "Content changed for " + name + ", marking stale");
+                    // Msg.debug(this, "Content changed for " + name + ", marking stale");
                 } else {
                     // Content unchanged - keep existing content and clear stale flag
                     // (we marked all nodes stale at the start of reindex)
                     node.setStale(false);
-                    Msg.debug(this, "Content unchanged for " + name + ", preserving semantic data");
+                    // Msg.debug(this, "Content unchanged for " + name + ", preserving semantic data");
                 }
             } else {
                 // Non-incremental mode or new node - always update content
@@ -686,13 +683,12 @@ public class StructureExtractor {
             return decompiledCode;
         }
         if (disassembly != null && !disassembly.isEmpty()) {
-            Msg.info(this, "Falling back to disassembly for: " + function.getName());
+            // Msg.info(this, "Falling back to disassembly for: " + function.getName());
             return disassembly;
         }
 
         String fallback = "// Unable to decompile or disassemble: " + function.getName();
-        Msg.error(this, "All extraction methods failed for: " + function.getName() +
-            " at " + function.getEntryPoint());
+        Msg.error(this, "All extraction methods failed for: " + function.getName() + " at " + function.getEntryPoint());
         return fallback;
     }
 
@@ -779,15 +775,13 @@ public class StructureExtractor {
                 java.util.List<String> securityFlags = features.generateSecurityFlags();
                 if (!securityFlags.isEmpty()) {
                     node.setSecurityFlags(securityFlags);
-                    Msg.debug(this, String.format("Security flags for %s: %s",
-                            function.getName(), securityFlags));
+                    // Msg.debug(this, String.format("Security flags for %s: %s", function.getName(), securityFlags));
                 }
 
-                Msg.debug(this, String.format("Extracted security features for %s: %s",
-                        function.getName(), features.toString()));
+                // Msg.debug(this, String.format("Extracted security features for %s: %s", function.getName(), features.toString()));
             }
         } catch (Exception e) {
-            Msg.debug(this, "Failed to extract security features for " + function.getName() + ": " + e.getMessage());
+            Msg.warn(this, "Failed to extract security features for " + function.getName() + ": " + e.getMessage());
         }
     }
 
@@ -862,21 +856,20 @@ public class StructureExtractor {
 
                     if (realCallee.isExternal()) {
                         if (debugThis) {
-                            Msg.info(this, String.format("  [%s] CALL -> EXTERNAL: %s", caller.getName(), realCallee.getName()));
+                            // Msg.info(this, String.format("  [%s] CALL -> EXTERNAL: %s", caller.getName(), realCallee.getName()));
                         }
                         createExternalCallEdge(callerNodeId, realCallee.getName());
                     } else if (realCallee.isThunk()) {
                         // Unresolved thunk - extract name
                         String externalName = extractExternalNameFromThunk(realCallee);
                         if (debugThis) {
-                            Msg.info(this, String.format("  [%s] CALL -> THUNK: %s (extracted: %s)",
-                                caller.getName(), realCallee.getName(), externalName));
+                            // Msg.info(this, String.format("  [%s] CALL -> THUNK: %s (extracted: %s)", caller.getName(), realCallee.getName(), externalName));
                         }
                         createExternalCallEdge(callerNodeId, externalName);
                     } else {
                         // Internal function
                         if (debugThis) {
-                            Msg.info(this, String.format("  [%s] CALL -> INTERNAL: %s", caller.getName(), realCallee.getName()));
+                            // Msg.info(this, String.format("  [%s] CALL -> INTERNAL: %s", caller.getName(), realCallee.getName()));
                         }
                         createInternalCallEdge(callerNodeId, realCallee);
                     }
@@ -884,8 +877,7 @@ public class StructureExtractor {
                     // No function at target - check if it's an external reference
                     Symbol sym = symTable.getPrimarySymbol(toAddr);
                     if (debugThis) {
-                        Msg.info(this, String.format("  [%s] CALL -> NO_FUNC at %s, symbol=%s",
-                            caller.getName(), toAddr, sym != null ? sym.getName() : "null"));
+                        // Msg.info(this, String.format("  [%s] CALL -> NO_FUNC at %s, symbol=%s", caller.getName(), toAddr, sym != null ? sym.getName() : "null"));
                     }
                     if (sym != null && sym.isExternalEntryPoint()) {
                         createExternalCallEdge(callerNodeId, sym.getName());
@@ -919,7 +911,7 @@ public class StructureExtractor {
                 Function target = resolveFunctionByAddress(funcMgr, matcher.group());
                 queueInferredCall(caller, callerNodeId, target, inferredTargets, "address_reference");
             } catch (Exception e) {
-                Msg.debug(this, "Failed to infer call from address token: " + e.getMessage());
+                Msg.warn(this, "Failed to infer call from address token: " + e.getMessage());
             }
         }
 
@@ -1244,8 +1236,7 @@ public class StructureExtractor {
         }
         // Debug: Log first few external node creations
         if (created && externalName.contains("WSA")) {
-            Msg.info(this, String.format("  EXTERNAL NODE CREATED: %s (id=%s, addr=%s)",
-                externalName, extNode.getId(), extNode.getAddress()));
+            // Msg.info(this, String.format("  EXTERNAL NODE CREATED: %s (id=%s, addr=%s)",externalName, extNode.getId(), extNode.getAddress()));
         }
         graph.queueEdgeForBatch(callerNodeId, extNode.getId(), EdgeType.CALLS);
     }
@@ -1416,7 +1407,7 @@ public class StructureExtractor {
                 }
             }
 
-            Msg.info(this, String.format("Extracted %d reference edges", refEdgesCreated.get()));
+            // Msg.info(this, String.format("Extracted %d reference edges", refEdgesCreated.get()));
         } catch (Exception e) {
             Msg.error(this, "Failed to extract references: " + e.getMessage(), e);
         }
@@ -1541,7 +1532,7 @@ public class StructureExtractor {
                 }
             }
         } catch (Exception e) {
-            Msg.debug(this, "Failed to extract references for " + function.getName() + ": " + e.getMessage());
+            Msg.warn(this, "Failed to extract references for " + function.getName() + ": " + e.getMessage());
         }
     }
 
@@ -1605,7 +1596,7 @@ public class StructureExtractor {
                 }
             }
         } catch (Exception e) {
-            Msg.debug(this, "Failed to extract vulnerable calls for " + function.getName() + ": " + e.getMessage());
+            Msg.warn(this, "Failed to extract vulnerable calls for " + function.getName() + ": " + e.getMessage());
         }
     }
 
@@ -1688,7 +1679,7 @@ public class StructureExtractor {
             ghidrassist.graphrag.community.CommunityDetector detector =
                     new ghidrassist.graphrag.community.CommunityDetector(graph, monitor);
             int communityCount = detector.detectCommunities();
-            Msg.info(this, String.format("Detected %d communities", communityCount));
+            // Msg.info(this, String.format("Detected %d communities", communityCount));
         } catch (Exception e) {
             Msg.error(this, "Failed to detect communities: " + e.getMessage(), e);
         }
