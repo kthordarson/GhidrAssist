@@ -39,7 +39,7 @@ import java.util.stream.Collectors;
  * with our existing GhidrAssist MCP architecture.
  */
 public class MCPClientAdapter {
-    
+
     private final MCPServerConfig config;
     private volatile McpAsyncClient mcpClient;
     private MCPClientHandler handler;
@@ -47,7 +47,7 @@ public class MCPClientAdapter {
     private List<MCPTool> discoveredTools = new ArrayList<>();
     private List<MCPResource> discoveredResources = new ArrayList<>();
     private List<MCPPrompt> discoveredPrompts = new ArrayList<>();
-    
+
     /**
      * Interface for handling client events (compatibility with existing code)
      */
@@ -59,18 +59,18 @@ public class MCPClientAdapter {
         void onPromptsDiscovered(MCPClientAdapter client, List<MCPPrompt> prompts);
         void onError(MCPClientAdapter client, Throwable error);
     }
-    
+
     public MCPClientAdapter(MCPServerConfig config) {
         this.config = config;
     }
-    
+
     /**
      * Set client event handler
      */
     public void setHandler(MCPClientHandler handler) {
         this.handler = handler;
     }
-    
+
     /**
      * Connect and initialize the MCP client using the official SDK
      */
@@ -131,16 +131,16 @@ public class MCPClientAdapter {
                 String baseUrl = config.getBaseUrl();
                 // Streamable HTTP uses /mcp endpoint
                 String mcpUrl = baseUrl.endsWith("/") ? baseUrl + "mcp" : baseUrl + "/mcp";
-                Msg.debug(this, "Creating Streamable HTTP transport for: " + mcpUrl);
+                // Msg.debug(this, "Creating Streamable HTTP transport for: " + mcpUrl);
                 return HttpClientStreamableHttpTransport.builder(mcpUrl).build();
             case STDIO:
-                Msg.debug(this, "Creating stdio transport for command: " + config.getCommand());
+                // Msg.debug(this, "Creating stdio transport for command: " + config.getCommand());
                 return createStdioTransport();
             case SSE:
             default:
                 baseUrl = config.getBaseUrl();
                 // SSE uses base URL (endpoints at /sse and /message)
-                Msg.debug(this, "Creating SSE transport for: " + baseUrl);
+                // Msg.debug(this, "Creating SSE transport for: " + baseUrl);
                 return HttpClientSseClientTransport.builder(baseUrl).build();
         }
     }
@@ -188,7 +188,7 @@ public class MCPClientAdapter {
             return false;
         }
     }
-    
+
     /**
      * Disconnect from the MCP server
      */
@@ -215,7 +215,7 @@ public class MCPClientAdapter {
             }
         });
     }
-    
+
     /**
      * Execute a tool call using the official SDK async client
      */
@@ -224,21 +224,21 @@ public class MCPClientAdapter {
             return CompletableFuture.failedFuture(
                 new IllegalStateException("Client not initialized"));
         }
-        
+
         // Convert JsonObject to the format expected by the SDK
         McpSchema.CallToolRequest toolCallRequest = new McpSchema.CallToolRequest(
-            toolName, 
+            toolName,
             convertJsonObjectToMap(arguments)
         );
-        
-        Msg.debug(this, "Executing tool: " + toolName + " on server: " + config.getName());
-        
+
+        // Msg.debug(this, "Executing tool: " + toolName + " on server: " + config.getName());
+
         // Use async client and convert Mono to CompletableFuture
         return mcpClient.callTool(toolCallRequest)
             .doOnSubscribe(subscription -> Msg.debug(this, "Starting tool execution: " + toolName + " on server: " + config.getName()))
             .doOnNext(result -> Msg.debug(this, "Received tool response: " + toolName))
             .map(result -> {
-                Msg.debug(this, "Tool execution completed: " + toolName);
+                // Msg.debug(this, "Tool execution completed: " + toolName);
                 // Convert result back to JsonElement for compatibility
                 Gson gson = new Gson();
                 return gson.fromJson(gson.toJson(result.content()), JsonElement.class);
@@ -248,14 +248,14 @@ public class MCPClientAdapter {
             .onErrorMap(e -> new RuntimeException("Tool execution failed: " + e.getMessage(), e))
             .toFuture();
     }
-    
+
     /**
      * Get all discovered tools
      */
     public List<MCPTool> getDiscoveredTools() {
         return new ArrayList<>(discoveredTools);
     }
-    
+
     /**
      * Find tool by name
      */
@@ -265,21 +265,21 @@ public class MCPClientAdapter {
             .findFirst()
             .orElse(null);
     }
-    
+
     /**
      * Check if client is connected and initialized
      */
     public boolean isReady() {
         return initialized && mcpClient != null;
     }
-    
+
     /**
      * Get server configuration
      */
     public MCPServerConfig getServerConfig() {
         return config;
     }
-    
+
     /**
      * Get connection status info
      */
@@ -320,7 +320,7 @@ public class MCPClientAdapter {
                 .map(r -> new MCPResource(r.uri(), r.name(), r.description(), r.mimeType()))
                 .collect(Collectors.toList()))
             .onErrorResume(e -> {
-                Msg.debug(this, "Resources not supported by server: " + e.getMessage());
+                Msg.warn(this, "Resources not supported by server: " + e.getMessage());
                 return reactor.core.publisher.Mono.just(Collections.emptyList());
             })
             .toFuture();
@@ -377,7 +377,7 @@ public class MCPClientAdapter {
                 })
                 .collect(Collectors.toList()))
             .onErrorResume(e -> {
-                Msg.debug(this, "Prompts not supported by server: " + e.getMessage());
+                Msg.warn(this, "Prompts not supported by server: " + e.getMessage());
                 return reactor.core.publisher.Mono.just(Collections.emptyList());
             })
             .toFuture();
@@ -401,7 +401,7 @@ public class MCPClientAdapter {
             .onErrorMap(e -> new RuntimeException("Failed to get prompt: " + e.getMessage(), e))
             .toFuture();
     }
-    
+
     /**
      * Discover available tools using the official SDK
      */
@@ -410,34 +410,34 @@ public class MCPClientAdapter {
             try {
                 McpSchema.ListToolsResult toolsResult = mcpClient.listTools().block();
                 List<MCPTool> tools = new ArrayList<>();
-                
+
                 for (McpSchema.Tool tool : toolsResult.tools()) {
                     // Convert SDK tool to our MCPTool format
                     MCPTool mcpTool = new MCPTool();
                     mcpTool.setName(tool.name());
                     mcpTool.setDescription(tool.description());
                     mcpTool.setServerName(config.getName());
-                    
+
                     // Convert input schema if present
                     if (tool.inputSchema() != null) {
                         Gson gson = new Gson();
                         JsonObject schema = gson.fromJson(gson.toJson(tool.inputSchema()), JsonObject.class);
                         mcpTool.setInputSchema(schema);
                     }
-                    
+
                     tools.add(mcpTool);
                 }
-                
+
                 discoveredTools = tools;
-                Msg.info(this, String.format("Successfully discovered %d tools from %s using official SDK", 
+                Msg.info(this, String.format("Successfully discovered %d tools from %s using official SDK",
                                             tools.size(), config.getName()));
-                
+
                 // Notify handler on EDT for UI updates
                 if (handler != null) {
-                    javax.swing.SwingUtilities.invokeLater(() -> 
+                    javax.swing.SwingUtilities.invokeLater(() ->
                         handler.onToolsDiscovered(this, tools));
                 }
-                
+
             } catch (Exception e) {
                 Msg.error(this, "Tool discovery failed with exception: " + e.getMessage());
                 throw new RuntimeException("Tool discovery failed", e);
@@ -479,7 +479,7 @@ public class MCPClientAdapter {
 
             } catch (Exception e) {
                 // Resources are optional - don't fail connection if not supported
-                Msg.debug(this, "Resource discovery not supported: " + e.getMessage());
+                Msg.warn(this, "Resource discovery not supported: " + e.getMessage());
                 discoveredResources = new ArrayList<>();
             }
         });
@@ -524,7 +524,7 @@ public class MCPClientAdapter {
 
             } catch (Exception e) {
                 // Prompts are optional - don't fail connection if not supported
-                Msg.debug(this, "Prompt discovery not supported: " + e.getMessage());
+                Msg.warn(this, "Prompt discovery not supported: " + e.getMessage());
                 discoveredPrompts = new ArrayList<>();
             }
         });

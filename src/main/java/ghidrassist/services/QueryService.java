@@ -284,7 +284,7 @@ public class QueryService {
             // No active binary context: fall back to plain chat mode.
             // Native tools depend on program/address and can cause incomplete
             // tool-calling loops when no program is loaded.
-            ghidra.util.Msg.info(this, "No program context - using regular query mode (native tools disabled)");
+            // ghidra.util.Msg.info(this, "No program context - using regular query mode (native tools disabled)");
             executeRegularQuery(request, llmApi, handler);
             return;
         }
@@ -416,9 +416,7 @@ public class QueryService {
         if (bridge == null || bridge.getMarkdown() == null || bridge.getMarkdown().isBlank()) {
             return history;
         }
-        ghidra.util.Msg.info(this, "Injecting ReAct continuation bridge for session "
-            + sessionManager.getCurrentSessionId() + " (run=" + bridge.getReactRunId()
-            + ", findings=" + bridge.getFindingCount() + ", pending=" + bridge.getPendingCount() + ")");
+        // ghidra.util.Msg.info(this, "Injecting ReAct continuation bridge for session " + sessionManager.getCurrentSessionId() + " (run=" + bridge.getReactRunId() + ", findings=" + bridge.getFindingCount() + ", pending=" + bridge.getPendingCount() + ")");
         history.add(new ChatMessage(ChatMessage.ChatMessageRole.ASSISTANT, bridge.getMarkdown()));
         return history;
     }
@@ -450,9 +448,7 @@ public class QueryService {
                 .append("\n\n");
         }
 
-        ghidra.util.Msg.info(this, "Injecting ReAct continuation bridge into plain prompt for session "
-            + sessionManager.getCurrentSessionId() + " (run=" + bridge.getReactRunId()
-            + ", findings=" + bridge.getFindingCount() + ", pending=" + bridge.getPendingCount() + ")");
+        // ghidra.util.Msg.info(this, "Injecting ReAct continuation bridge into plain prompt for session " + sessionManager.getCurrentSessionId() + " (run=" + bridge.getReactRunId() + ", findings=" + bridge.getFindingCount() + ", pending=" + bridge.getPendingCount() + ")");
         return conversation.toString();
     }
 
@@ -491,8 +487,7 @@ public class QueryService {
             if (sessionId != ChatSessionManager.NO_SESSION) {
                 PersistedChatMessage msg = getLastMessage();
                 if (msg != null) {
-                    ghidra.util.Msg.info(this, "Persisting user message to session " + sessionId
-                        + " (chars=" + msg.getContent().length() + ")");
+                    // ghidra.util.Msg.info(this, "Persisting user message to session " + sessionId + " (chars=" + msg.getContent().length() + ")");
                     int messageId = messageRepository.saveMessage(programHash, sessionId, msg);
                     if (messageId > 0) {
                         msg.setDbId(messageId);

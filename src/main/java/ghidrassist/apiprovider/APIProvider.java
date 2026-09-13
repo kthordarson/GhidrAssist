@@ -80,17 +80,13 @@ public abstract class APIProvider implements ChatProvider {
     // Reasoning configuration
     public ReasoningConfig getReasoningConfig() {
         ReasoningConfig result = reasoningConfig != null ? reasoningConfig : new ReasoningConfig();
-        ghidra.util.Msg.info(this, "DEBUG [APIProvider.getReasoningConfig]: Returning " +
-            result.getEffort() + ", enabled=" + result.isEnabled() +
-            " (field is " + (reasoningConfig != null ? "NOT NULL" : "NULL") + ")");
+        // ghidra.util.Msg.info(this, "DEBUG [APIProvider.getReasoningConfig]: Returning " + result.getEffort() + ", enabled=" + result.isEnabled() + " (field is " + (reasoningConfig != null ? "NOT NULL" : "NULL") + ")");
         return result;
     }
 
     public void setReasoningConfig(ReasoningConfig config) {
         this.reasoningConfig = config != null ? config : new ReasoningConfig();
-        ghidra.util.Msg.info(this, "DEBUG [APIProvider.setReasoningConfig]: Set to " +
-            this.reasoningConfig.getEffort() + ", enabled=" + this.reasoningConfig.isEnabled() +
-            " (input was " + (config != null ? config.getEffort().toString() : "NULL") + ")");
+        // ghidra.util.Msg.info(this, "DEBUG [APIProvider.setReasoningConfig]: Set to " + this.reasoningConfig.getEffort() + ", enabled=" + this.reasoningConfig.isEnabled() + " (input was " + (config != null ? config.getEffort().toString() : "NULL") + ")");
     }
 
     protected abstract OkHttpClient buildClient();
@@ -136,37 +132,37 @@ public abstract class APIProvider implements ChatProvider {
         return builder;
     }
 
-    
+
     public double[] getEmbeddings(String text) throws APIProviderException {
         CompletableFuture<double[]> future = new CompletableFuture<>();
-        
+
         getEmbeddingsAsync(text, new EmbeddingCallback() {
             @Override
             public void onSuccess(double[] embedding) {
                 future.complete(embedding);
             }
-            
+
             @Override
             public void onError(Throwable error) {
                 future.completeExceptionally(error);
             }
         });
-        
+
         try {
             return future.get(30, TimeUnit.SECONDS);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new StreamCancelledException(name, "get_embeddings", 
+            throw new StreamCancelledException(name, "get_embeddings",
                 StreamCancelledException.CancellationReason.USER_REQUESTED, e);
         } catch (ExecutionException e) {
             Throwable cause = e.getCause();
             if (cause instanceof APIProviderException) {
                 throw (APIProviderException) cause;
             }
-            throw new APIProviderException(APIProviderException.ErrorCategory.SERVICE_ERROR, 
+            throw new APIProviderException(APIProviderException.ErrorCategory.SERVICE_ERROR,
                 name, "get_embeddings", "Failed to get embeddings: " + e.getMessage());
         } catch (TimeoutException e) {
-            throw new APIProviderException(APIProviderException.ErrorCategory.TIMEOUT, 
+            throw new APIProviderException(APIProviderException.ErrorCategory.TIMEOUT,
                 name, "get_embeddings", "Embedding request timed out");
         }
     }
@@ -175,7 +171,7 @@ public abstract class APIProvider implements ChatProvider {
         void onSuccess(double[] embedding);
         void onError(Throwable error);
     }
-    
+
     /**
      * Handle network-related exceptions and convert to appropriate APIProviderException
      */
@@ -212,7 +208,7 @@ public abstract class APIProvider implements ChatProvider {
         } else if (e instanceof IOException && lowerMessage.contains("connection")) {
             return new NetworkException(name, operation, NetworkException.NetworkErrorType.CONNECTION_LOST, e);
         }
-        
+
         // Default network error
         return new NetworkException(name, operation, "Network error: " + message);
     }
@@ -247,13 +243,13 @@ public abstract class APIProvider implements ChatProvider {
             "refresh_token_revoked".equals(apiErrorCode) ||
             "refresh_token_invalid".equals(apiErrorCode);
     }
-    
+
     /**
      * Handle HTTP response errors and convert to appropriate APIProviderException
      */
     protected APIProviderException handleHttpError(Response response, String operation) {
         String responseBody = null;
-        
+
         try {
             if (response.body() != null) {
                 responseBody = response.body().string();
@@ -261,10 +257,10 @@ public abstract class APIProvider implements ChatProvider {
         } catch (IOException e) {
             // Ignore errors reading response body
         }
-        
+
         return handleHttpError(response, responseBody, operation);
     }
-    
+
     /**
      * Handle HTTP response errors with preread response body
      */
@@ -272,21 +268,21 @@ public abstract class APIProvider implements ChatProvider {
         int statusCode = response.code();
         String apiErrorCode = extractApiErrorCode(responseBody);
         String errorMessage = extractErrorMessage(responseBody, statusCode);
-        
+
         switch (statusCode) {
             case 401:
-                return new AuthenticationException(name, operation, statusCode, apiErrorCode, 
+                return new AuthenticationException(name, operation, statusCode, apiErrorCode,
                     errorMessage != null ? errorMessage : "Invalid or missing API key");
-                    
+
             case 403:
-                return new AuthenticationException(name, operation, statusCode, apiErrorCode, 
+                return new AuthenticationException(name, operation, statusCode, apiErrorCode,
                     errorMessage != null ? errorMessage : "API key does not have sufficient permissions");
-                    
+
             case 429:
                 Integer retryAfter = extractRetryAfter(response, responseBody);
-                return new RateLimitException(name, operation, statusCode, apiErrorCode, 
+                return new RateLimitException(name, operation, statusCode, apiErrorCode,
                     errorMessage != null ? errorMessage : "Rate limit exceeded", retryAfter);
-                    
+
             case 400:
                 // Be more specific about model errors - look for definitive phrases, not just "model"
                 String lowerErrorMessage = errorMessage != null ? errorMessage.toLowerCase() : "";
@@ -311,31 +307,31 @@ public abstract class APIProvider implements ChatProvider {
                 return new APIProviderException(APIProviderException.ErrorCategory.CONFIGURATION,
                     name, operation, statusCode, apiErrorCode,
                     errorMessage != null ? errorMessage : "Bad request");
-                    
+
             case 404:
                 if (operation.contains("model")) {
-                    return new ModelException(name, operation, ModelException.ModelErrorType.MODEL_NOT_FOUND, 
+                    return new ModelException(name, operation, ModelException.ModelErrorType.MODEL_NOT_FOUND,
                         statusCode, apiErrorCode);
                 }
-                return new APIProviderException(APIProviderException.ErrorCategory.CONFIGURATION, 
-                    name, operation, statusCode, apiErrorCode, 
+                return new APIProviderException(APIProviderException.ErrorCategory.CONFIGURATION,
+                    name, operation, statusCode, apiErrorCode,
                     errorMessage != null ? errorMessage : "Resource not found");
-                    
+
             case 500:
             case 502:
             case 503:
             case 504:
-                return new APIProviderException(APIProviderException.ErrorCategory.SERVICE_ERROR, 
-                    name, operation, statusCode, apiErrorCode, 
+                return new APIProviderException(APIProviderException.ErrorCategory.SERVICE_ERROR,
+                    name, operation, statusCode, apiErrorCode,
                     errorMessage != null ? errorMessage : "Service error", true, null, null);
-                    
+
             default:
-                return new APIProviderException(APIProviderException.ErrorCategory.SERVICE_ERROR, 
-                    name, operation, statusCode, apiErrorCode, 
+                return new APIProviderException(APIProviderException.ErrorCategory.SERVICE_ERROR,
+                    name, operation, statusCode, apiErrorCode,
                     errorMessage != null ? errorMessage : "HTTP error " + statusCode);
         }
     }
-    
+
     /**
      * Extract API error code from response body (provider-specific)
      */
@@ -343,7 +339,7 @@ public abstract class APIProvider implements ChatProvider {
         // Default implementation - subclasses should override for provider-specific logic
         return null;
     }
-    
+
     /**
      * Extract error message from response body (provider-specific)
      */
@@ -362,14 +358,14 @@ public abstract class APIProvider implements ChatProvider {
                     // Ignore parsing errors
                 }
             }
-            
+
             // Fallback: return truncated response body
             return responseBody.length() > 200 ? responseBody.substring(0, 200) + "..." : responseBody;
         }
-        
+
         return null;
     }
-    
+
     /**
      * Extract retry-after value from response
      */
@@ -383,7 +379,7 @@ public abstract class APIProvider implements ChatProvider {
                 // Ignore parsing errors
             }
         }
-        
+
         // Check for retry-after in response body (provider-specific)
         if (responseBody != null && responseBody.contains("retry")) {
             // Basic parsing - subclasses should override for provider-specific logic
@@ -397,10 +393,10 @@ public abstract class APIProvider implements ChatProvider {
                 // Ignore parsing errors
             }
         }
-        
+
         return null; // No retry-after information found
     }
-    
+
     /**
      * Execute an HTTP request with retry logic for handling rate limits and transient errors
      */

@@ -280,9 +280,7 @@ public class ConversationalToolHandler {
                     }
                     // Pre-flight token logging (Phase 4)
                     ContextStatus status = contextWindowManager.getStatus(conversationHistory, availableFunctions).join();
-                    Msg.debug(this, String.format("Pre-flight: %d tokens, %d messages, %d%% used",
-                        status.getCurrentTokens(), conversationHistory.size(),
-                        status.getPercentageUsed()));
+                    // Msg.debug(this, String.format("Pre-flight: %d tokens, %d messages, %d%% used", status.getCurrentTokens(), conversationHistory.size(), status.getPercentageUsed()));
                 } catch (Exception e) {
                     Msg.warn(this, "ContextWindowManager failed, falling back to legacy trimming: " + e.getMessage());
                     trimConversationHistory();
@@ -474,8 +472,7 @@ public class ConversationalToolHandler {
                         if ("tool_use".equals(stopReason) && !toolCalls.isEmpty()) {
                             // Increment tool call round counter (multi-turn tracking)
                             toolCallRound++;
-                            Msg.debug(ConversationalToolHandler.this,
-                                String.format("Tool calling round %d/%d", toolCallRound, maxToolRounds));
+                            // Msg.debug(ConversationalToolHandler.this, String.format("Tool calling round %d/%d", toolCallRound, maxToolRounds));
 
                             // Execute tools after text streaming completes
                             handleToolCallsFromStream(toolCalls);
@@ -612,8 +609,7 @@ public class ConversationalToolHandler {
                         if ("tool_calls".equals(stopReason) && !toolCalls.isEmpty()) {
                             // Increment tool call round counter (multi-turn tracking)
                             toolCallRound++;
-                            Msg.debug(ConversationalToolHandler.this,
-                                String.format("Tool calling round %d/%d", toolCallRound, maxToolRounds));
+                            // Msg.debug(ConversationalToolHandler.this, String.format("Tool calling round %d/%d", toolCallRound, maxToolRounds));
 
                             handleToolCallsFromOpenAIStream(toolCalls);
                         } else {
@@ -702,8 +698,7 @@ public class ConversationalToolHandler {
                         if ("tool_calls".equals(stopReason) && !toolCalls.isEmpty()) {
                             // Increment tool call round counter (multi-turn tracking)
                             toolCallRound++;
-                            Msg.debug(ConversationalToolHandler.this,
-                                String.format("Tool calling round %d/%d", toolCallRound, maxToolRounds));
+                            // Msg.debug(ConversationalToolHandler.this, String.format("Tool calling round %d/%d", toolCallRound, maxToolRounds));
 
                             handleToolCallsFromLMStudioStream(toolCalls);
                         } else {
@@ -909,7 +904,7 @@ public class ConversationalToolHandler {
                 return;
             }
 
-            Msg.debug(this, "Raw LLM response: " + (rawResponse != null ? rawResponse : "NULL"));
+            // Msg.debug(this, "Raw LLM response: " + (rawResponse != null ? rawResponse : "NULL"));
 
             // Validate response is not null or empty
             if (rawResponse == null || rawResponse.trim().isEmpty()) {
@@ -1918,7 +1913,7 @@ public class ConversationalToolHandler {
             sb.append(String.format(" content_len=%d", contentLen));
             sb.append("\n");
         }
-        Msg.debug(this, sb.toString());
+        // Msg.debug(this, sb.toString());
     }
 
     /**
