@@ -84,7 +84,7 @@ public class LMStudioProvider extends APIProvider implements FunctionCallingProv
     @Override
     public String createChatCompletion(List<ChatMessage> messages) throws APIProviderException {
         JsonObject payload = buildChatCompletionPayload(messages, false);
-        
+
         Request request = new Request.Builder()
             .url(super.getUrl() + LMSTUDIO_CHAT_ENDPOINT)
             .post(RequestBody.create(gson.toJson(payload), JSON))
@@ -138,7 +138,7 @@ public class LMStudioProvider extends APIProvider implements FunctionCallingProv
 
                             JsonObject chunk = gson.fromJson(data, JsonObject.class);
                             String content = extractDeltaContent(chunk);
-                            
+
                             if (content != null) {
                                 if (isFirst) {
                                     handler.onStart();
@@ -315,7 +315,7 @@ public class LMStudioProvider extends APIProvider implements FunctionCallingProv
             responseObj.add("choices", choices);
 
             return gson.toJson(responseObj);
-            
+
         } catch (IOException e) {
             throw handleNetworkError(e, "createChatCompletionWithFunctionsFullResponse");
         }
@@ -389,11 +389,11 @@ public class LMStudioProvider extends APIProvider implements FunctionCallingProv
             JsonObject responseObj = gson.fromJson(response.body().string(), JsonObject.class);
             List<String> modelIds = new ArrayList<>();
             JsonArray models = responseObj.getAsJsonArray("data");
-            
+
             for (JsonElement model : models) {
                 modelIds.add(model.getAsJsonObject().get("id").getAsString());
             }
-            
+
             return modelIds;
         } catch (IOException e) {
             throw handleNetworkError(e, "getAvailableModels");
@@ -403,7 +403,8 @@ public class LMStudioProvider extends APIProvider implements FunctionCallingProv
     @Override
     public void getEmbeddingsAsync(String text, EmbeddingCallback callback) {
         JsonObject payload = new JsonObject();
-        payload.addProperty("model", "text-embedding-nomic-embed-text-v1.5");
+        payload.addProperty("model", "gpt-5.6-sol");
+        // payload.addProperty("model", "text-embedding-nomic-embed-text-v1.5");
         payload.addProperty("input", text);
 
         Request request = new Request.Builder()
@@ -421,7 +422,7 @@ public class LMStudioProvider extends APIProvider implements FunctionCallingProv
             public void onResponse(Call call, Response response) throws IOException {
                 try (ResponseBody responseBody = response.body()) {
                     if (!response.isSuccessful()) {
-                        callback.onError(new IOException("Failed to get embeddings: " + 
+                        callback.onError(new IOException("Failed to get embeddings: " +
                             response.code() + " " + response.message()));
                         return;
                     }
@@ -435,7 +436,7 @@ public class LMStudioProvider extends APIProvider implements FunctionCallingProv
                     for (int i = 0; i < embedding.size(); i++) {
                         embeddingArray[i] = embedding.get(i).getAsDouble();
                     }
-                    
+
                     callback.onSuccess(embeddingArray);
                 } catch (Exception e) {
                     callback.onError(e);
@@ -483,7 +484,7 @@ public class LMStudioProvider extends APIProvider implements FunctionCallingProv
             JsonObject delta = chunk.getAsJsonArray("choices")
                 .get(0).getAsJsonObject()
                 .getAsJsonObject("delta");
-            
+
             if (delta.has("content")) {
                 return delta.get("content").getAsString();
             }

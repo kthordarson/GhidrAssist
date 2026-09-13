@@ -25,7 +25,8 @@ public class AzureOpenAIProvider extends APIProvider
     private static final Gson gson = new Gson();
     private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
     private static final String AZURE_API_VERSION = "2025-01-01-preview";
-    private static final String AZURE_EMBEDDING_MODEL = "text-embedding-ada-002";
+    //private static final String AZURE_EMBEDDING_MODEL = "text-embedding-ada-002";
+    private static final String AZURE_EMBEDDING_MODEL = "gpt-5.6-sol";
 
     // Retry settings for streaming calls
     private static final int MAX_STREAMING_RETRIES = 10;

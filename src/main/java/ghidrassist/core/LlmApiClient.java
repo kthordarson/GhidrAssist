@@ -22,15 +22,16 @@ public class LlmApiClient {
     private APIProvider provider;
     private final AnalysisDB analysisDB;
     private final GhidrAssistPlugin plugin;
-    
-    private final String DEFAULT_SYSTEM_PROMPT = 
+
+    private final String DEFAULT_SYSTEM_PROMPT =
             "You are a professional software reverse engineer specializing in cybersecurity. You are intimately \n"
             + "familiar with x86_64, ARM, PPC and MIPS architectures. You are an expert C and C++ developer.\n"
             + "You are an expert Python and Rust developer. You are familiar with common frameworks and libraries \n"
             + "such as WinSock, OpenSSL, MFC, etc. You are an expert in TCP/IP network programming and packet analysis.\n"
             + "You always respond to queries in a structured format using Markdown styling for headings and lists. \n"
-            + "You format code blocks using back-tick code-fencing.\n";
-            
+            + "You format code blocks using back-tick code-fencing.\n"
+            + "Suggest a better function signature with correct return data types/parameters and the right types applied to local and global variables. Rename functions called FUN_* to a better name according to what the function does and in/out function calls.\n";
+
     private final String OPTIONAL_TOOL_SYSTEM_PROMPT =
             "You are a professional software reverse engineer. "
             + "You may use the provided tools when they help gather precise information. "
@@ -94,7 +95,7 @@ public class LlmApiClient {
         }
         return DEFAULT_SYSTEM_PROMPT;
     }
-    
+
     /**
      * Create messages for regular chat completion
      */
@@ -103,13 +104,13 @@ public class LlmApiClient {
         if (isO1OrO3Model()) {
             systemUser = ChatMessage.ChatMessageRole.USER;
         }
-        
+
         List<ChatMessage> messages = new ArrayList<>();
         messages.add(new ChatMessage(systemUser, getCurrentContext()));
         messages.add(new ChatMessage(ChatMessage.ChatMessageRole.USER, prompt));
         return messages;
     }
-    
+
     /**
      * Create messages for function calling
      */
@@ -131,33 +132,33 @@ public class LlmApiClient {
         messages.add(new ChatMessage(ChatMessage.ChatMessageRole.USER, prompt));
         return messages;
     }
-    
+
     /**
      * Check if the current model is O1 or O3 series (which handle system prompts differently)
      */
     private boolean isO1OrO3Model() {
         return provider != null && (
-            provider.getModel().startsWith("o1-") || 
-            provider.getModel().startsWith("o3-") || 
+            provider.getModel().startsWith("o1-") ||
+            provider.getModel().startsWith("o3-") ||
             provider.getModel().startsWith("o4-")
         );
     }
-    
+
     /**
      * Stream chat completion
      */
-    public void streamChatCompletion(List<ChatMessage> messages, LlmApi.LlmResponseHandler handler) 
+    public void streamChatCompletion(List<ChatMessage> messages, LlmApi.LlmResponseHandler handler)
             throws APIProviderException {
         if (provider == null) {
             throw new IllegalStateException("LLM provider is not initialized.");
         }
         provider.streamChatCompletion(messages, handler);
     }
-    
+
     /**
      * Create chat completion with functions
      */
-    public String createChatCompletionWithFunctions(List<ChatMessage> messages, List<Map<String, Object>> functions) 
+    public String createChatCompletionWithFunctions(List<ChatMessage> messages, List<Map<String, Object>> functions)
             throws APIProviderException {
         return createChatCompletionWithFunctions(messages, functions, ToolChoiceMode.AUTO);
     }
@@ -170,11 +171,11 @@ public class LlmApiClient {
         }
         return provider.createChatCompletionWithFunctions(messages, functions, toolChoiceMode);
     }
-    
+
     /**
      * Create chat completion with functions - returns full response including finish_reason
      */
-    public String createChatCompletionWithFunctionsFullResponse(List<ChatMessage> messages, List<Map<String, Object>> functions) 
+    public String createChatCompletionWithFunctionsFullResponse(List<ChatMessage> messages, List<Map<String, Object>> functions)
             throws APIProviderException {
         return createChatCompletionWithFunctionsFullResponse(messages, functions, ToolChoiceMode.AUTO);
     }
@@ -188,21 +189,21 @@ public class LlmApiClient {
         }
         return provider.createChatCompletionWithFunctionsFullResponse(messages, functions, toolChoiceMode);
     }
-    
+
     /**
      * Check if provider is available
      */
     public boolean isProviderAvailable() {
         return provider != null;
     }
-    
+
     /**
      * Get provider name for logging/error handling
      */
     public String getProviderName() {
         return provider != null ? provider.getName() : "Unknown";
     }
-    
+
     /**
      * Get provider model for logging/error handling
      */

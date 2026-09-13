@@ -28,7 +28,8 @@ public class OpenAIPlatformApiProvider extends APIProvider implements FunctionCa
     private static final String OPENAI_CHAT_ENDPOINT = "chat/completions";
     private static final String OPENAI_MODELS_ENDPOINT = "models";
     private static final String OPENAI_EMBEDDINGS_ENDPOINT = "embeddings";
-    private static final String OPENAI_EMBEDDING_MODEL = "text-embedding-ada-002";
+    private static final String OPENAI_EMBEDDING_MODEL = "gpt-5.6-sol";
+    //private static final String OPENAI_EMBEDDING_MODEL = "text-embedding-ada-002";
 
     // Retry settings for streaming calls
     private static final int MAX_STREAMING_RETRIES = 10;
@@ -68,11 +69,11 @@ public class OpenAIPlatformApiProvider extends APIProvider implements FunctionCa
                     Request.Builder requestBuilder = originalRequest.newBuilder()
                         .header("Authorization", "Bearer " + key)
                         .header("Content-Type", "application/json");
-                    
+
                     if (!originalRequest.method().equals("GET")) {
                         requestBuilder.header("Accept", "application/json");
                     }
-                    
+
                     return chain.proceed(requestBuilder.build());
                 });
 
@@ -105,7 +106,7 @@ public class OpenAIPlatformApiProvider extends APIProvider implements FunctionCa
     @Override
     public String createChatCompletion(List<ChatMessage> messages) throws APIProviderException {
         JsonObject payload = buildChatCompletionPayload(messages, false);
-        
+
         Request request = new Request.Builder()
             .url(url + OPENAI_CHAT_ENDPOINT)
             .post(RequestBody.create(gson.toJson(payload), JSON))
@@ -117,7 +118,7 @@ public class OpenAIPlatformApiProvider extends APIProvider implements FunctionCa
                 JsonObject responseObj = gson.fromJson(responseBody, JsonObject.class);
                 return extractContentFromResponse(responseObj);
             } catch (JsonSyntaxException e) {
-                throw new ResponseException(name, "createChatCompletion", 
+                throw new ResponseException(name, "createChatCompletion",
                     ResponseException.ResponseErrorType.MALFORMED_JSON, e);
             }
         } catch (IOException e) {
@@ -303,12 +304,12 @@ public class OpenAIPlatformApiProvider extends APIProvider implements FunctionCa
                                                                 List<Map<String, Object>> functions,
                                                                 ToolChoiceMode toolChoiceMode) throws APIProviderException {
         JsonObject payload = buildChatCompletionPayload(messages, false);
-        
+
         // Add tools (functions) to the payload
         payload.add("tools", gson.toJsonTree(functions));
         payload.addProperty("tool_choice",
             (toolChoiceMode != null ? toolChoiceMode : ToolChoiceMode.AUTO).toOpenAIToolChoice(messages));
-        
+
         Request request = new Request.Builder()
             .url(url + OPENAI_CHAT_ENDPOINT)
             .post(RequestBody.create(gson.toJson(payload), JSON))
@@ -316,10 +317,10 @@ public class OpenAIPlatformApiProvider extends APIProvider implements FunctionCa
 
         try (Response response = executeWithRetry(request, "createChatCompletionWithFunctionsFullResponse")) {
             String responseBody = response.body().string();
-            
+
             // Return the full response body as-is, including finish_reason
             return responseBody;
-            
+
         } catch (IOException e) {
             throw new NetworkException(name, "createChatCompletionWithFunctionsFullResponse", NetworkException.NetworkErrorType.CONNECTION_FAILED);
         }
@@ -334,7 +335,7 @@ public class OpenAIPlatformApiProvider extends APIProvider implements FunctionCa
     public String createChatCompletionWithFunctions(List<ChatMessage> messages, List<Map<String, Object>> functions,
                                                     ToolChoiceMode toolChoiceMode) throws APIProviderException {
         JsonObject payload = buildChatCompletionPayload(messages, false);
-        
+
         // Add tools (functions) to the payload
         payload.add("tools", gson.toJsonTree(functions));
         payload.addProperty("tool_choice",
@@ -348,7 +349,7 @@ public class OpenAIPlatformApiProvider extends APIProvider implements FunctionCa
         try (Response response = executeWithRetry(request, "createChatCompletionWithFunctions")) {
             String responseBody = response.body().string();
             StringReader responseStr = new StringReader(responseBody.replaceFirst("```json", "").replaceAll("```", ""));
-            
+
             try {
                 // Create a lenient JsonReader
                 JsonReader jsonReader = new JsonReader(responseStr);
@@ -372,12 +373,12 @@ public class OpenAIPlatformApiProvider extends APIProvider implements FunctionCa
             // If no tool_calls, check if content contains a JSON object
             if (message.has("content")) {
                 String content = message.get("content").getAsString().trim();
-                
+
                 // Try to parse content as JSON if it looks like JSON
                 if (content.startsWith("{") || content.startsWith("[")) {
                     try {
                         JsonElement contentJson = JsonParser.parseString(content);
-                        
+
                         // Case 1: Content is a single function call
                         if (contentJson.isJsonObject()) {
                             JsonObject funcObj = contentJson.getAsJsonObject();
@@ -393,12 +394,12 @@ public class OpenAIPlatformApiProvider extends APIProvider implements FunctionCa
                                 return "{\"tool_calls\":" + toolCalls.toString() + "}";
                             }
                         }
-                        
+
                         // Case 2: Content is already a tool_calls array
                         if (contentJson.isJsonObject() && contentJson.getAsJsonObject().has("tool_calls")) {
                             return content;
                         }
-                        
+
                         // Case 3: Content is an array of function calls
                         if (contentJson.isJsonArray()) {
                             JsonArray array = contentJson.getAsJsonArray();
@@ -424,16 +425,16 @@ public class OpenAIPlatformApiProvider extends APIProvider implements FunctionCa
                         // Content is not valid JSON, fall through to return original content
                     }
                 }
-                
+
                 // If we couldn't parse as tool calls, return the original content
                 return "{\"tool_calls\":[]}";
             }
 
             // No valid tool calls found
             return "{\"tool_calls\":[]}";
-            
+
             } catch (JsonSyntaxException e) {
-                throw new ResponseException(name, "createChatCompletionWithFunctions", 
+                throw new ResponseException(name, "createChatCompletionWithFunctions",
                     ResponseException.ResponseErrorType.MALFORMED_JSON, e);
             }
         } catch (IOException e) {
@@ -686,7 +687,7 @@ public class OpenAIPlatformApiProvider extends APIProvider implements FunctionCa
         } else {
             payload.addProperty("max_tokens", super.getMaxTokens());
         }
-        
+
         payload.addProperty("stream", stream);
 
         // Add reasoning_effort if configured
@@ -699,7 +700,7 @@ public class OpenAIPlatformApiProvider extends APIProvider implements FunctionCa
         for (ChatMessage message : messages) {
             JsonObject messageObj = new JsonObject();
             messageObj.addProperty("role", message.getRole());
-            
+
             // Handle content - tool messages MUST always have content (even empty string)
             if (message.getContent() != null) {
                 messageObj.addProperty("content", message.getContent());
@@ -723,7 +724,7 @@ public class OpenAIPlatformApiProvider extends APIProvider implements FunctionCa
             if (message.getToolCallId() != null) {
                 messageObj.addProperty("tool_call_id", message.getToolCallId());
             }
-            
+
             messagesArray.add(messageObj);
         }
         // Last-line-of-defense: validate tool_call/result pairing in the payload
@@ -897,7 +898,7 @@ public class OpenAIPlatformApiProvider extends APIProvider implements FunctionCa
             JsonObject delta = chunk.getAsJsonArray("choices")
                 .get(0).getAsJsonObject()
                 .getAsJsonObject("delta");
-            
+
             if (delta.has("content")) {
                 return delta.get("content").getAsString();
             }
@@ -1195,7 +1196,7 @@ public class OpenAIPlatformApiProvider extends APIProvider implements FunctionCa
         if (responseBody == null || responseBody.isEmpty()) {
             return null;
         }
-        
+
         try {
             JsonObject errorObj = gson.fromJson(responseBody, JsonObject.class);
             if (errorObj.has("error")) {
@@ -1248,11 +1249,11 @@ public class OpenAIPlatformApiProvider extends APIProvider implements FunctionCa
         } catch (JsonSyntaxException e) {
             // Ignore parsing errors and fall back to parent implementation
         }
-        
+
         // Fallback to parent implementation
         return super.extractErrorMessage(responseBody, statusCode);
     }
-    
+
     @Override
     protected Integer extractRetryAfter(Response response, String responseBody) {
         // First check the parent implementation for standard headers
@@ -1260,7 +1261,7 @@ public class OpenAIPlatformApiProvider extends APIProvider implements FunctionCa
         if (retryAfter != null) {
             return retryAfter;
         }
-        
+
         // Check OpenAI-specific retry information in response body
         if (responseBody != null) {
             try {
@@ -1275,7 +1276,7 @@ public class OpenAIPlatformApiProvider extends APIProvider implements FunctionCa
                 // Ignore parsing errors
             }
         }
-        
+
         return null;
     }
 }
