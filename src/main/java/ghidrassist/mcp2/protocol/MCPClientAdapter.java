@@ -231,14 +231,9 @@ public class MCPClientAdapter {
             convertJsonObjectToMap(arguments)
         );
 
-        // Msg.debug(this, "Executing tool: " + toolName + " on server: " + config.getName());
-
         // Use async client and convert Mono to CompletableFuture
         return mcpClient.callTool(toolCallRequest)
-            .doOnSubscribe(subscription -> Msg.debug(this, "Starting tool execution: " + toolName + " on server: " + config.getName()))
-            .doOnNext(result -> Msg.debug(this, "Received tool response: " + toolName))
             .map(result -> {
-                // Msg.debug(this, "Tool execution completed: " + toolName);
                 // Convert result back to JsonElement for compatibility
                 Gson gson = new Gson();
                 return gson.fromJson(gson.toJson(result.content()), JsonElement.class);
