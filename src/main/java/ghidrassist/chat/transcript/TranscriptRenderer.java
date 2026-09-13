@@ -544,8 +544,7 @@ public class TranscriptRenderer {
     private String toggleLink(String correlationId, boolean expanded) {
         String action = expanded ? "tool-collapse:" : "tool-expand:";
         String label = expanded ? "Hide details" : "Show details";
-        return "<div class='ga-toggle'><a href='" + action + escapeHtml(correlationId) + "'>"
-            + label + "</a></div>";
+        return "<div class='ga-toggle'><a href='" + action + escapeHtml(correlationId) + "'>" + label + "</a></div>";
     }
 
     private String compactPreview(String content, int maxLength) {

@@ -1326,11 +1326,9 @@ public class ConversationalToolHandler {
             String filteredContent = responseProcessor.filterThinkBlocks(content);
 
             // Debug logging for final response
-            Msg.info(this, String.format("Final LLM response: length=%d",
-                filteredContent != null ? filteredContent.length() : 0));
+            // Msg.info(this, String.format("Final LLM response: length=%d",filteredContent != null ? filteredContent.length() : 0));
             if (filteredContent != null && filteredContent.length() > 0) {
-                Msg.info(this, "Final response preview: " +
-                    (filteredContent.length() > 200 ? filteredContent.substring(0, 200) + "..." : filteredContent));
+                // f(this, "Final response preview: " + (filteredContent.length() > 200 ? filteredContent.substring(0, 200) + "..." : filteredContent));
             }
 
             // Send only the final LLM response (tool execution messages were already sent individually)
@@ -1452,8 +1450,7 @@ public class ConversationalToolHandler {
             return; // No trimming needed
         }
 
-        Msg.info(this, String.format("Context compression triggered: ~%d chars, %d messages",
-            totalChars, conversationHistory.size()));
+        // Msg.info(this, String.format("Context compression triggered: ~%d chars, %d messages",totalChars, conversationHistory.size()));
 
         // Identify beginning messages to always keep: system + first user query
         List<ChatMessage> beginning = new ArrayList<>();
@@ -1515,8 +1512,7 @@ public class ConversationalToolHandler {
         conversationHistory.clear();
         conversationHistory.addAll(trimmedHistory);
 
-        Msg.info(this, String.format("Context compressed: %d messages, ~%d chars (summarized %d messages)",
-            conversationHistory.size(), estimateTotalChars(), messagesToDiscard.size()));
+        // Msg.info(this, String.format("Context compressed: %d messages, ~%d chars (summarized %d messages)", conversationHistory.size(), estimateTotalChars(), messagesToDiscard.size()));
     }
 
     /**
@@ -1555,7 +1551,7 @@ public class ConversationalToolHandler {
             String summary = apiClient.getProvider().createChatCompletion(summaryMessages);
 
             if (summary != null && !summary.trim().isEmpty()) {
-                Msg.info(this, "LLM summarization succeeded");
+                // Msg.info(this, "LLM summarization succeeded");
                 return summary.trim();
             }
         } catch (Exception e) {
@@ -1620,7 +1616,7 @@ public class ConversationalToolHandler {
               .append(" messages that were compressed.");
         }
 
-        Msg.info(this, "Using extractive summary fallback");
+        // Msg.info(this, "Using extractive summary fallback");
         return sb.toString();
     }
 
