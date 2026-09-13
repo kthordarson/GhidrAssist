@@ -574,12 +574,7 @@ public class SemanticGraphController {
             semanticGraphTab.hideProgress();
             semanticGraphTab.setCommunityDetectionRunning(false);
             semanticGraphTab.refreshCurrentView();
-            Msg.showInfo(this, null, "Full Pipeline Complete",
-                    String.format("ReIndex pipeline completed:\n" +
-                            "• Structure extraction\n" +
-                            "• Security analysis\n" +
-                            "• Network flow analysis\n" +
-                            "• Community detection (%d communities)", result.communityCount));
+            Msg.showInfo(this, null, "Full Pipeline Complete", String.format("ReIndex pipeline completed:\n" + "• Structure extraction\n" + "• Security analysis\n" + "• Network flow analysis\n" + "• Community detection (%d communities)", result.communityCount));
         });
 
         communityDetectionWorker.setFailedCallback(error -> {
@@ -587,8 +582,7 @@ public class SemanticGraphController {
             semanticGraphTab.setCommunityDetectionRunning(false);
             semanticGraphTab.refreshCurrentView();
             Msg.warn(this, "Community Detection failed: " + error);
-            Msg.showInfo(this, null, "Pipeline Complete (with errors)",
-                    "ReIndex pipeline completed with some errors.\nCheck console for details.");
+            Msg.showInfo(this, null, "Pipeline Complete (with errors)", "ReIndex pipeline completed with some errors.\nCheck console for details.");
         });
 
         communityDetectionWorker.setCancelledCallback(() -> {

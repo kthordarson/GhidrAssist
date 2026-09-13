@@ -1242,9 +1242,7 @@ public class ConversationalToolHandler {
                     }
 
                     // Debug logging for development (keep for troubleshooting)
-                    Msg.debug(this, String.format("Tool '%s' completed: success=%s, length=%d",
-                        toolName, result.isSuccess(),
-                        result.getContent() != null ? result.getContent().length() : 0));
+                    // Msg.debug(this, String.format("Tool '%s' completed: success=%s, length=%d", toolName, result.isSuccess(), result.getContent() != null ? result.getContent().length() : 0));
 
                     // Create tool result for conversation
                     JsonObject toolResult = new JsonObject();

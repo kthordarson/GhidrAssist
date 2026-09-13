@@ -51,12 +51,12 @@ public class SemanticToolProvider implements ToolProvider {
     @Override
     public List<Tool> getTools() {
         if (!queryTools.isAvailable()) {
-            Msg.debug(this, "Semantic tools not available (no program context)");
+            Msg.warn(this, "Semantic tools not available (no program context)");
             return Collections.emptyList();
         }
 
         List<MCPTool> mcpTools = queryTools.getToolDefinitions();
-        Msg.debug(this, "Returning " + mcpTools.size() + " semantic tools");
+        // Msg.debug(this, "Returning " + mcpTools.size() + " semantic tools");
 
         return mcpTools.stream()
                 .map(mcp -> new NativeTool(mcp, PROVIDER_NAME))
@@ -70,7 +70,7 @@ public class SemanticToolProvider implements ToolProvider {
         return queryTools.executeTool(name, args)
                 .thenApply(mcpResult -> {
                     if (!mcpResult.isSuccess()) {
-                        Msg.debug(this, "Tool " + name + " returned error: " + mcpResult.getError());
+                        Msg.warn(this, "Tool " + name + " returned error: " + mcpResult.getError());
                         return ToolResult.error(mcpResult.getError());
                     } else {
                         Msg.debug(this, "Tool " + name + " succeeded");
