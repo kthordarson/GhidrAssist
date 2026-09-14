@@ -2065,7 +2065,6 @@ public class TabController {
         return new LlmApi.LlmResponseHandler() {
             private final StringBuilder responseBuffer = new StringBuilder();
             private final Object bufferLock = new Object();
-            private Timestamp streamingAssistantTimestamp;
 
             @Override
             public void onStart() {
@@ -2108,15 +2107,31 @@ public class TabController {
                             responseBuffer.append(delta);
                         }
                     } else {
-                        delta = partialResponse;
-                        responseBuffer.append(delta);
+                        responseBuffer.append(partialResponse);
                     }
+
+                    // No immediate UI update - let the periodic render handle it
+                    // This prevents UI flooding while keeping content responsive
+                }
+            }
+
+            /**
+             * Periodic render task - renders markdown to HTML every RENDER_INTERVAL_MS
+             */
+            private void renderCurrentContent() {
+                final String content;
+                synchronized (bufferLock) {
+                    if (responseBuffer.length() == 0) {
+                        return;
+                    }
+                    content = queryService.getConversationHistory() +
+                        "**Assistant**:\n" + responseBuffer.toString();
                 }
 
-                // Send delta to streaming renderer for incremental processing
-                if (!delta.isEmpty() && currentStreamingRenderer != null) {
-                    currentStreamingRenderer.onChunkReceived(delta);
-                }
+                SwingUtilities.invokeLater(() -> {
+                    String html = markdownHelper.markdownToHtml(content);
+                    queryTab.setResponseText(html);
+                });
             }
 
             @Override

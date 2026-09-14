@@ -13,12 +13,12 @@ import ghidrassist.tools.api.ToolResult;
 import ghidrassist.tools.native_.NativeToolManager;
 
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
-import java.util.function.IntSupplier;
-import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 /**
@@ -34,6 +34,9 @@ import java.util.stream.Collectors;
  *   ToolResult result = registry.execute("get_semantic_analysis", args).join();
  */
 public class ToolRegistry implements ToolExecutor {
+
+    private static final int DEFAULT_MAX_FUNCTION_TOOLS = 120;
+    private static final Pattern QUERY_TOKEN_PATTERN = Pattern.compile("[a-z0-9_]+");
 
     private final List<ToolProvider> providers = new ArrayList<>();
     private Program currentProgram;
@@ -304,8 +307,29 @@ public class ToolRegistry implements ToolExecutor {
      * @return List of function definitions
      */
     public List<Map<String, Object>> getToolsAsFunction() {
-        // Deduplicate by tool name - first registration wins
-        Map<String, Tool> uniqueTools = new java.util.LinkedHashMap<>();
+        return getToolsAsFunction(null, Integer.MAX_VALUE);
+    }
+
+    /**
+     * Get a query-aware, capped list of tools as function definitions for LLM function calling.
+     * This keeps tool payloads under provider limits while prioritizing tools relevant to the query.
+     *
+     * @param queryContext The current user query or analysis objective.
+     * @return List of function definitions ordered by relevance.
+     */
+    public List<Map<String, Object>> getToolsAsFunction(String queryContext) {
+        return getToolsAsFunction(queryContext, DEFAULT_MAX_FUNCTION_TOOLS);
+    }
+
+    /**
+     * Get a query-aware, capped list of tools as function definitions for LLM function calling.
+     *
+     * @param queryContext The current user query or analysis objective.
+     * @param maxTools Maximum number of tool definitions to include.
+     * @return List of function definitions ordered by relevance.
+     */
+    public List<Map<String, Object>> getToolsAsFunction(String queryContext, int maxTools) {
+        Map<String, Tool> uniqueTools = new LinkedHashMap<>();
         for (Tool tool : getAllTools()) {
             if (!uniqueTools.containsKey(tool.getName())) {
                 uniqueTools.put(tool.getName(), tool);
@@ -314,9 +338,88 @@ public class ToolRegistry implements ToolExecutor {
             }
         }
 
+        if (maxTools <= 0) {
+            maxTools = DEFAULT_MAX_FUNCTION_TOOLS;
+        }
+
+        if (queryContext == null || queryContext.trim().isEmpty()) {
+            return uniqueTools.values().stream()
+                    .limit(maxTools)
+                    .map(this::toolToFunctionSchema)
+                    .collect(Collectors.toList());
+        }
+
+        List<String> queryTokens = tokenizeQuery(queryContext);
+
         return uniqueTools.values().stream()
-                .map(this::toolToFunctionSchema)
+                .map(tool -> new ScoredTool(tool, scoreTool(tool, queryTokens)))
+                .sorted(Comparator
+                        .comparingInt(ScoredTool::score).reversed()
+                        .thenComparing(scored -> scored.tool().getName(), String.CASE_INSENSITIVE_ORDER))
+                .limit(maxTools)
+                .map(scored -> toolToFunctionSchema(scored.tool()))
                 .collect(Collectors.toList());
+    }
+
+    private List<String> tokenizeQuery(String queryContext) {
+        List<String> tokens = new ArrayList<>();
+        Matcher matcher = QUERY_TOKEN_PATTERN.matcher(queryContext.toLowerCase());
+        while (matcher.find()) {
+            String token = matcher.group();
+            if (token.length() >= 2) {
+                tokens.add(token);
+            }
+        }
+        return tokens;
+    }
+
+    private int scoreTool(Tool tool, List<String> queryTokens) {
+        String name = tool.getName().toLowerCase();
+        String description = tool.getDescription() != null ? tool.getDescription().toLowerCase() : "";
+
+        int score = 0;
+
+        // Strongly prefer semantic inspection and code analysis tools for reverse engineering prompts.
+        if (name.contains("semantic") || name.contains("decompile") || name.contains("disassemble") ||
+                name.contains("code") || name.contains("function") || name.contains("address") ||
+                name.contains("data") || name.contains("xref") || name.contains("string") ||
+                name.contains("import") || name.contains("export") || name.contains("block") ||
+                name.contains("comment") || name.contains("variable") || name.contains("type") ||
+                name.contains("analysis") || name.contains("search") || name.contains("program")) {
+            score += 20;
+        }
+
+        for (String token : queryTokens) {
+            if (name.equals(token)) {
+                score += 100;
+            } else if (name.contains(token)) {
+                score += 50;
+            }
+
+            if (description.contains(token)) {
+                score += 15;
+            }
+        }
+
+        return score;
+    }
+
+    private static final class ScoredTool {
+        private final Tool tool;
+        private final int score;
+
+        private ScoredTool(Tool tool, int score) {
+            this.tool = tool;
+            this.score = score;
+        }
+
+        private Tool tool() {
+            return tool;
+        }
+
+        private int score() {
+            return score;
+        }
     }
 
     /**

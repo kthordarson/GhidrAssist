@@ -44,6 +44,8 @@ import java.util.stream.Collectors;
  */
 public class ReActOrchestrator {
 
+    private static final int MAX_LLM_FUNCTION_TOOLS = 120;
+
     // Configuration
     private int maxIterations;  // Now mutable for dynamic extension
     private final int baseMaxIterations;  // Original limit for tracking
@@ -197,14 +199,12 @@ public class ReActOrchestrator {
     /**
      * Get all tools from ToolRegistry in LLM function calling format.
      */
-    private List<Map<String, Object>> getToolsAsFunction() {
+    private List<Map<String, Object>> getToolsAsFunction(String queryContext) {
         if (toolRegistry == null) {
             return List.of();
         }
 
-        return toolRegistry.getAllTools().stream()
-                .map(this::toolToFunctionSchema)
-                .collect(Collectors.toList());
+        return toolRegistry.getToolsAsFunction(queryContext, MAX_LLM_FUNCTION_TOOLS);
     }
 
     /**
@@ -366,14 +366,13 @@ public class ReActOrchestrator {
                             todoManager.getAllTodos(),
                             todoManager.toCompactString());
 
-                        // Get available tools from all providers via ToolRegistry
-                        List<Map<String, Object>> tools = getToolsAsFunction();
-                        if (tools.isEmpty()) {
-                            Msg.warn(ReActOrchestrator.this, "No tools available - analysis may be limited");
-                        } else {
-                            Msg.info(ReActOrchestrator.this,
-                                "Loaded " + tools.size() + " tools from ToolRegistry");
-                        }
+                // Get available tools from all providers via ToolRegistry
+                List<Map<String, Object>> tools = getToolsAsFunction(query);
+                if (tools.isEmpty()) {
+                    Msg.warn(this, "No tools available - analysis may be limited");
+                } else {
+                    Msg.info(this, "Loaded " + tools.size() + " tools from ToolRegistry");
+                }
 
                         // Track iteration count
                         AtomicInteger iteration = new AtomicInteger(0);

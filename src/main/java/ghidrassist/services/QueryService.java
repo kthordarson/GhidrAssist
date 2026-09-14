@@ -63,6 +63,8 @@ public class QueryService {
     private static final String CHAT_TYPE_NOTES = "notes";
     private static final String DEFAULT_DOCUMENT_DOC_TYPE = "notes";
 
+    private static final int MAX_LLM_FUNCTION_TOOLS = 120;
+
     private final GhidrAssistPlugin plugin;
     private final AnalysisDB analysisDB;  // Keep for ReAct and backward compatibility
     private final AnalysisDataService analysisDataService;
@@ -290,7 +292,8 @@ public class QueryService {
         }
 
         // Get native tools only (MCP tools won't be registered since MCP is disabled)
-        java.util.List<java.util.Map<String, Object>> nativeFunctions = toolRegistry.getToolsAsFunction();
+        java.util.List<java.util.Map<String, Object>> nativeFunctions =
+            toolRegistry.getToolsAsFunction(request.getProcessedQuery(), MAX_LLM_FUNCTION_TOOLS);
 
         ghidra.util.Msg.info(this, "Native tool registry has " + nativeFunctions.size() + " tools available");
 
@@ -353,7 +356,8 @@ public class QueryService {
         }
 
         // Get ALL tools from registry (includes native tools + MCP tools)
-        java.util.List<java.util.Map<String, Object>> allFunctions = toolRegistry.getToolsAsFunction();
+        java.util.List<java.util.Map<String, Object>> allFunctions =
+            toolRegistry.getToolsAsFunction(request.getProcessedQuery(), MAX_LLM_FUNCTION_TOOLS);
 
         ghidra.util.Msg.info(this, "Tool registry has " + allFunctions.size() + " tools available");
 

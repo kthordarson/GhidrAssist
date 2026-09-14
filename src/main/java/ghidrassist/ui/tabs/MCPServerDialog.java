@@ -195,6 +195,16 @@ public class MCPServerDialog extends JDialog {
         formPanel.add(enabledCheckBox, gbc);
 
         JPanel helpPanel = new JPanel(new BorderLayout());
+        JTextArea helpText = new JTextArea(
+            "Examples:\n" +
+            "• Name: GhidraMCP, URL: http://localhost:8084\n" +
+            "• Name: Local Tools, URL: http://127.0.0.1:3000\n\n" +
+            "The server must implement the Model Context Protocol (MCP) specification."
+        );
+        helpText.setEditable(false);
+        helpText.setOpaque(false);
+        helpText.setFont(helpText.getFont().deriveFont(Font.ITALIC, 11f));
+        helpPanel.add(helpText, BorderLayout.CENTER);
         helpPanel.setBorder(BorderFactory.createTitledBorder("Help"));
         helpPanel.add(helpTextArea, BorderLayout.CENTER);
 
@@ -256,21 +266,7 @@ public class MCPServerDialog extends JDialog {
         envScrollPane.setVisible(isStdio);
 
         if (transport == MCPServerConfig.TransportType.SSE) {
-            urlField.setToolTipText("HTTP(S) base URL for SSE transport, such as http://localhost:8080");
-            helpTextArea.setText(
-                "Use SSE for legacy MCP servers exposing /sse and /message endpoints.\n\n" +
-                "Example:\n" +
-                "  Name: GhidrAssistMCP\n" +
-                "  URL: http://localhost:8080"
-            );
-        } else if (transport == MCPServerConfig.TransportType.STREAMABLE_HTTP) {
-            urlField.setToolTipText("HTTP(S) base URL for Streamable HTTP transport; GhidrAssist will use the /mcp endpoint");
-            helpTextArea.setText(
-                "Use Streamable HTTP for modern remote MCP servers.\n\n" +
-                "Example:\n" +
-                "  Name: Remote Tools\n" +
-                "  URL: http://127.0.0.1:3000"
-            );
+            urlField.setToolTipText("HTTP(S) URL for Server-Sent Events transport (e.g., http://localhost:8084)");
         } else {
             commandField.setToolTipText("Executable to launch, such as python, uvx, npx, or a full path");
             argsField.setToolTipText("Shell-style arguments or a JSON array of strings");

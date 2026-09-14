@@ -782,6 +782,12 @@ public class ConversationalToolHandler {
      */
     private void handleToolCallsFromStream(List<AnthropicPlatformApiProvider.ToolCall> toolCalls) {
         try {
+            // Update UI with tool calling status
+            String toolExecutionHeader = "\n\n[handleToolCallsFromStream] 🔧 **Executing tools...**\n";
+            javax.swing.SwingUtilities.invokeLater(() -> {
+                userHandler.onUpdate(toolExecutionHeader);
+            });
+
             // Convert AnthropicPlatformApiProvider.ToolCall to JsonArray format expected by existing methods
             JsonArray toolCallsArray = new JsonArray();
             for (AnthropicPlatformApiProvider.ToolCall toolCall : toolCalls) {
@@ -816,6 +822,11 @@ public class ConversationalToolHandler {
      */
     private void handleToolCallsFromOpenAIStream(List<OpenAIPlatformApiProvider.ToolCall> toolCalls) {
         try {
+            String toolExecutionHeader = "\n\n[handleToolCallsFromOpenAIStream] 🔧 **Executing tools...**\n";
+            javax.swing.SwingUtilities.invokeLater(() -> {
+                userHandler.onUpdate(toolExecutionHeader);
+            });
+
             JsonArray toolCallsArray = new JsonArray();
             for (OpenAIPlatformApiProvider.ToolCall toolCall : toolCalls) {
                 JsonObject toolCallObj = new JsonObject();
@@ -848,6 +859,11 @@ public class ConversationalToolHandler {
      */
     private void handleToolCallsFromLMStudioStream(List<LMStudioProvider.ToolCall> toolCalls) {
         try {
+            String toolExecutionHeader = "\n\n[handleToolCallsFromLMStudioStream] 🔧 **Executing tools...**\n";
+            javax.swing.SwingUtilities.invokeLater(() -> {
+                userHandler.onUpdate(toolExecutionHeader);
+            });
+
             JsonArray toolCallsArray = new JsonArray();
             for (LMStudioProvider.ToolCall toolCall : toolCalls) {
                 JsonObject toolCallObj = new JsonObject();
@@ -1094,7 +1110,13 @@ public class ConversationalToolHandler {
                     });
                 }
             }
-
+            
+            // Update UI with tool calling status
+            String toolExecutionHeader = "[toolExecutionHeader] 🔧 **Executing tools...**\n";
+            javax.swing.SwingUtilities.invokeLater(() -> {
+                userHandler.onUpdate(toolExecutionHeader);
+            });
+            
             // Execute tools and collect results
             executeToolsSequentially(toolCalls, 0, new ArrayList<>());
 

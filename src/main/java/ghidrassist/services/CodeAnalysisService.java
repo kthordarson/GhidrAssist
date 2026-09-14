@@ -50,7 +50,7 @@ public class CodeAnalysisService {
             throw new Exception("Unknown code view type.");
         }
         
-        String prompt = "Explain the following " + codeType + " code:\n```\n" + functionCode + "\n```";
+        String prompt = "Explain the following " + codeType + " code:\n```\n" + functionCode + "\n```" + "\nProvide a detailed explanation of the function's purpose, logic, and any relevant context. Write a better function signature with correct types and parameters. If the function is part of a larger system, explain how it fits into that system.";
         return new AnalysisRequest(AnalysisRequest.Type.FUNCTION, prompt, function);
     }
     
