@@ -225,9 +225,9 @@ public class RAGEngine {
                 double[] embedding = entry.getValue();
                 double similarity = cosineSimilarity(queryEmbedding, embedding);
 
-                String[] keyParts = key.split("_");
-                String filename = keyParts[0];
-                int chunkId = Integer.parseInt(keyParts[1]);
+                int lastUnderscore = key.lastIndexOf('_');
+                String filename = key.substring(0, lastUnderscore);
+                int chunkId = Integer.parseInt(key.substring(lastUnderscore + 1));
 
                 try {
                     String snippet = getSnippetFromIndex(filename, chunkId);

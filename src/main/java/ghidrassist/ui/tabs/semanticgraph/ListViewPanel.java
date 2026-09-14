@@ -11,8 +11,6 @@ import java.util.ArrayList;
 import ghidrassist.core.TabController;
 import ghidrassist.ui.tabs.SemanticGraphTab;
 import ghidrassist.graphrag.nodes.KnowledgeNode;
-import ghidrassist.graphrag.BinaryKnowledgeGraph.GraphEdge;
-
 /**
  * List/table view sub-panel for the Semantic Graph tab.
  * Displays callers, callees, edges, security flags, and LLM summary.
@@ -99,7 +97,7 @@ public class ListViewPanel extends JPanel {
         edgesTable.getColumnModel().getColumn(3).setPreferredWidth(100);
 
         // Edge type filter
-        String[] filterOptions = {"All Types", "CALLS", "REFERENCES", "CALLS_VULNERABLE", "SIMILAR_PURPOSE",
+        String[] filterOptions = {"All Types", "CALLS", "INFERRED_CALLS", "REFERENCES", "CALLS_VULNERABLE", "SIMILAR_PURPOSE",
                                   "TAINT_FLOWS_TO", "VULNERABLE_VIA", "NETWORK_SEND", "NETWORK_RECV"};
         edgeTypeFilter = new JComboBox<>(filterOptions);
 
@@ -371,23 +369,26 @@ public class ListViewPanel extends JPanel {
     /**
      * Update the edges table.
      */
-    public void setEdges(List<GraphEdge> edges) {
+    public void setEdges(List<EdgeEntry> edges) {
         // Store all edges for filtering
         this.allEdges = edges;
         refreshEdgesTable();
     }
 
-    private List<GraphEdge> allEdges = new ArrayList<>();
+    private List<EdgeEntry> allEdges = new ArrayList<>();
+    private List<EdgeEntry> visibleEdges = new ArrayList<>();
 
     private void refreshEdgesTable() {
         edgesTableModel.setRowCount(0);
+        visibleEdges.clear();
         String filter = (String) edgeTypeFilter.getSelectedItem();
 
-        for (GraphEdge edge : allEdges) {
-            if (filter.equals("All Types") || edge.getType().name().equals(filter)) {
+        for (EdgeEntry edge : allEdges) {
+            if (filter.equals("All Types") || edge.getFilterType().equals(filter)) {
+                visibleEdges.add(edge);
                 edgesTableModel.addRow(new Object[]{
-                        edge.getType().getDisplayName(),
-                        edge.getTargetId(), // Should be resolved to name
+                        edge.getDisplayType(),
+                        edge.getTargetLabel(),
                         String.format("%.2f", edge.getWeight()),
                         "[View]"
                 });
@@ -494,10 +495,10 @@ public class ListViewPanel extends JPanel {
     }
 
     private void handleEdgeAction(int row) {
-        // For now, just navigate to the target
-        String targetId = (String) edgesTableModel.getValueAt(row, 1);
-        // The targetId should be resolved to an address - controller will handle this
-        controller.handleSemanticGraphEdgeClick(targetId);
+        if (row < 0 || row >= visibleEdges.size()) {
+            return;
+        }
+        controller.handleSemanticGraphEdgeClick(visibleEdges.get(row).getTargetId());
     }
 
     // ===== Inner Classes =====
@@ -526,6 +527,45 @@ public class ListViewPanel extends JPanel {
         @Override
         public String toString() {
             return name;
+        }
+    }
+
+    /**
+     * Entry for the edges table with a display label and stable navigation target.
+     */
+    public static class EdgeEntry {
+        private final String filterType;
+        private final String displayType;
+        private final String targetId;
+        private final String targetLabel;
+        private final double weight;
+
+        public EdgeEntry(String filterType, String displayType, String targetId, String targetLabel, double weight) {
+            this.filterType = filterType;
+            this.displayType = displayType;
+            this.targetId = targetId;
+            this.targetLabel = targetLabel;
+            this.weight = weight;
+        }
+
+        public String getFilterType() {
+            return filterType;
+        }
+
+        public String getDisplayType() {
+            return displayType;
+        }
+
+        public String getTargetId() {
+            return targetId;
+        }
+
+        public String getTargetLabel() {
+            return targetLabel;
+        }
+
+        public double getWeight() {
+            return weight;
         }
     }
 

@@ -3,6 +3,7 @@ package ghidrassist.workers;
 import ghidra.program.model.listing.Program;
 import ghidrassist.AnalysisDB;
 import ghidrassist.graphrag.GraphRAGService;
+import ghidrassist.graphrag.SemanticAnalysisOptions;
 import ghidrassist.graphrag.extraction.SemanticExtractor;
 
 /**
@@ -12,6 +13,7 @@ public class SemanticAnalysisWorker extends AnalysisWorker<SemanticAnalysisWorke
 
     private final AnalysisDB analysisDB;
     private final Program program;
+    private final SemanticAnalysisOptions options;
 
     public static class Result {
         public final int summarized;
@@ -26,8 +28,13 @@ public class SemanticAnalysisWorker extends AnalysisWorker<SemanticAnalysisWorke
     }
 
     public SemanticAnalysisWorker(AnalysisDB analysisDB, Program program) {
+        this(analysisDB, program, SemanticAnalysisOptions.defaults());
+    }
+
+    public SemanticAnalysisWorker(AnalysisDB analysisDB, Program program, SemanticAnalysisOptions options) {
         this.analysisDB = analysisDB;
         this.program = program;
+        this.options = options != null ? options : SemanticAnalysisOptions.defaults();
     }
 
     @Override
@@ -66,8 +73,13 @@ public class SemanticAnalysisWorker extends AnalysisWorker<SemanticAnalysisWorke
                     if (isCancelRequested()) {
                         throw new RuntimeException("Cancelled");
                     }
-                }
+                },
+                options
         );
+
+        // Rebuild FTS index to reflect newly-populated summaries
+        publishProgress(99, 100, "Rebuilding search index...");
+        analysisDB.rebuildFts();
 
         if (isCancelRequested()) {
             return new Result(result.summarized, result.errors, result.elapsedMs);

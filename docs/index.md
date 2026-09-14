@@ -13,7 +13,7 @@ The plugin supports local LLMs (Ollama, LM Studio) and cloud providers (OpenAI, 
 
 ## Core Capabilities
 
-GhidrAssist is organized into six tabs, each focused on a specific aspect of LLM-assisted analysis:
+GhidrAssist is organized into seven tabs, each focused on a specific aspect of LLM-assisted analysis:
 
 | Tab | Purpose |
 |-----|---------|
@@ -22,6 +22,7 @@ GhidrAssist is organized into six tabs, each focused on a specific aspect of LLM
 | **[Actions](tabs/actions-tab.md)** | LLM-powered suggestions for renaming, retyping, and struct creation |
 | **[Semantic Graph](tabs/semantic-graph-tab.md)** | Build a knowledge graph of function relationships and security properties |
 | **[RAG](tabs/rag-tab.md)** | Manage external documentation for context-enhanced queries |
+| **[SymGraph](tabs/symgraph-tab.md)** | Compare against SymGraph, import shared analysis, and publish your own revisions |
 | **[Settings](tabs/settings-tab.md)** | Configure LLM providers, MCP servers, and plugin options |
 
 ## Key Features
@@ -35,6 +36,8 @@ GhidrAssist supports the Model Context Protocol (MCP), allowing LLMs to interact
 - Query cross-references
 - Access the semantic graph
 - Use external MCP servers for specialized tooling
+
+GhidrAssist can connect to remote MCP servers over `SSE` or `Streamable HTTP`, and it can launch local MCP tools directly over `stdio`.
 
 See the [Query Workflow](workflows/query-workflow.md) for details on using MCP tools.
 
@@ -74,6 +77,14 @@ Build a rich knowledge graph of your binary that captures:
 
 The graph can be queried directly or used to enhance LLM responses.
 
+### SymGraph Cloud Sharing
+
+Share your analysis with the community through SymGraph:
+
+- Push function names, types, and semantic graph data
+- Pull existing analysis from other researchers
+- Resolve conflicts between local and cloud symbols
+
 ## Supported LLM Providers
 
 GhidrAssist supports a wide range of LLM providers:
@@ -83,7 +94,7 @@ GhidrAssist supports a wide range of LLM providers:
 | **Ollama** | Local LLM inference (recommended for privacy) |
 | **LM Studio** | Local models with GUI |
 | **Open WebUI** | Self-hosted web interface |
-| **OpenAI Platform API** | GPT-5.2 with API key |
+| **OpenAI Platform API** | GPT-5+, GPT-4o, o1, o3, o4 with API key |
 | **OpenAI OAuth** | ChatGPT Pro/Plus subscription |
 | **Anthropic Platform API** | Claude models with API key |
 | **Anthropic OAuth** | Claude Pro/Max subscription |
@@ -92,8 +103,8 @@ GhidrAssist supports a wide range of LLM providers:
 
 ### Recommended Models
 
-- **Reasoning-intensive tasks**: Claude Opus 4.5, OpenAI 5.2, gpt-oss (extended thinking)
-- **General analysis**: GPT-5.2-codex, Claude Sonnet 4.5, DeepSeek, Llama-based models
+- **Reasoning-intensive tasks**: Claude Sonnet 4+, OpenAI GPT-5.2, gpt-oss (extended thinking)
+- **General analysis**: GPT-5.2-Codex, Claude Sonnet 3.5, DeepSeek, Llama-based models
 - **Local/private analysis**: Ollama with gpt-oss, qwen2.5-coder, or codellama
 
 ## Architecture Overview
@@ -123,4 +134,5 @@ Ready to start using GhidrAssist? See the [Getting Started Guide](getting-starte
 - [Actions Tab](tabs/actions-tab.md)
 - [Semantic Graph Tab](tabs/semantic-graph-tab.md)
 - [RAG Tab](tabs/rag-tab.md)
+- [SymGraph Tab](tabs/symgraph-tab.md)
 - [Settings Tab](tabs/settings-tab.md)

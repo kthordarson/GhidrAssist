@@ -29,6 +29,12 @@ public enum EdgeType {
     CALLS("structural", "Calls", true),
 
     /**
+     * Heuristic function call relationship inferred from decompiled content.
+     * Directed from suspected caller to suspected callee.
+     */
+    INFERRED_CALLS("structural", "Inferred calls", true),
+
+    /**
      * Control flow between basic blocks.
      * Directed following execution flow.
      */

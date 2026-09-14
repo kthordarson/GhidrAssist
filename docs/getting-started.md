@@ -88,10 +88,10 @@ ollama serve
 2. Fill in:
    - **Name**: `Ollama Local`
    - **Type**: `Ollama`
-   - **Model**: `llama3.1:8b`
+   - **Model**: `gpt-oss:20b`
    - **URL**: `http://localhost:11434`
    - **API Key**: Leave empty
-   - **Max Tokens**: `4096`
+   - **Max Tokens**: `16384`
 3. Click **Save**
 4. Click **Test**
 
@@ -186,9 +186,6 @@ If you have a Claude Pro/Max or ChatGPT Pro/Plus subscription, use OAuth instead
 2. Click the **Explain** tab
 3. Click **Explain Function**
 4. Wait for the explanation to stream in
-
-![First Explanation](screenshots/first-explanation.png)
-<!-- SCREENSHOT: Explain tab showing a function explanation with the response text visible -->
 
 ### Step 4: Ask a Question
 

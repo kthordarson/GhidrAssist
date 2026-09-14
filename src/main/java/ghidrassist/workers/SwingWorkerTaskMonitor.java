@@ -98,6 +98,7 @@ public class SwingWorkerTaskMonitor implements TaskMonitor {
         }
     }
 
+    @SuppressWarnings("deprecation")
     @Override
     public void checkCanceled() throws ghidra.util.exception.CancelledException {
         checkCancelled();
@@ -144,9 +145,10 @@ public class SwingWorkerTaskMonitor implements TaskMonitor {
         // Not used in SwingWorker context
     }
 
+    @SuppressWarnings("deprecation")
     @Override
     public void clearCanceled() {
-        // Not used in SwingWorker context (alternate spelling)
+        clearCancelled();
     }
 
     private void fireProgress() {

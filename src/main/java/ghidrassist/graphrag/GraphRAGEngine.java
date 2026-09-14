@@ -67,7 +67,7 @@ public class GraphRAGEngine {
         Msg.info(this, "getSemanticAnalysis: Looking up function name: " + functionName);
         KnowledgeNode node = graph.getNodeByName(functionName);
         Msg.info(this, "getSemanticAnalysis: Graph lookup returned node=" + (node != null ? node.getName() : "null"));
-        return buildSemanticAnalysis(node, node != null ? node.getAddress() : 0);
+        return buildSemanticAnalysis(node, node != null && node.getAddress() != null ? node.getAddress() : 0);
     }
 
     private SemanticAnalysis buildSemanticAnalysis(KnowledgeNode node, long address) {
@@ -90,18 +90,22 @@ public class GraphRAGEngine {
 
         // Get callers and callees
         List<String> callers = graph.getCallers(node.getId()).stream()
-                .map(n -> n.getName() != null ? n.getName() : String.format("sub_%x", n.getAddress()))
+                .map(n -> n.getName() != null ? n.getName() :
+                        (n.getAddress() != null ? String.format("sub_%x", n.getAddress()) : "unknown"))
                 .collect(Collectors.toList());
 
         List<String> callees = graph.getCallees(node.getId()).stream()
-                .map(n -> n.getName() != null ? n.getName() : String.format("sub_%x", n.getAddress()))
+                .map(n -> n.getName() != null ? n.getName() :
+                        (n.getAddress() != null ? String.format("sub_%x", n.getAddress()) : "unknown"))
                 .collect(Collectors.toList());
 
         // Get community if available
         String community = getCommunityNameForNode(node.getId());
 
-        // Extract category from summary if present
-        String category = extractCategory(node.getLlmSummary());
+        String category = node.getCategory();
+        if (category == null || category.isEmpty()) {
+            category = extractCategory(node.getLlmSummary());
+        }
 
         // indexed=true means we have SOME useful data (structure or semantic)
         // The SemanticAnalysis.hasSemanticAnalysis() method checks for LLM summary specifically
@@ -117,7 +121,9 @@ public class GraphRAGEngine {
                 callers,
                 callees,
                 community,
-                node.getRawContent(),
+                node.getSignature(),
+                node.getDecompiledCode(),
+                node.getDisassembly(),
                 indexed
         );
     }
@@ -148,7 +154,7 @@ public class GraphRAGEngine {
         List<KnowledgeNode> callers = graph.getCallers(sourceNode.getId());
         for (KnowledgeNode caller : callers) {
             for (KnowledgeNode sibling : graph.getCallees(caller.getId())) {
-                if (!addedIds.contains(sibling.getId()) && sibling.getType() == NodeType.FUNCTION) {
+                if (!addedIds.contains(sibling.getId()) && sibling.getType() == NodeType.FUNCTION && sibling.getAddress() != null) {
                     addedIds.add(sibling.getId());
                     results.add(new SimilarFunction(
                             sibling.getName(),
@@ -168,7 +174,7 @@ public class GraphRAGEngine {
             List<KnowledgeNode> callees = graph.getCallees(sourceNode.getId());
             for (KnowledgeNode callee : callees) {
                 for (KnowledgeNode sibling : graph.getCallers(callee.getId())) {
-                    if (!addedIds.contains(sibling.getId()) && sibling.getType() == NodeType.FUNCTION) {
+                    if (!addedIds.contains(sibling.getId()) && sibling.getType() == NodeType.FUNCTION && sibling.getAddress() != null) {
                         addedIds.add(sibling.getId());
                         results.add(new SimilarFunction(
                                 sibling.getName(),
@@ -192,7 +198,7 @@ public class GraphRAGEngine {
                 String query = String.join(" OR ", keywords);
                 List<KnowledgeNode> ftsResults = graph.ftsSearch(query, limit - results.size() + 5);
                 for (KnowledgeNode match : ftsResults) {
-                    if (!addedIds.contains(match.getId()) && match.getType() == NodeType.FUNCTION) {
+                    if (!addedIds.contains(match.getId()) && match.getType() == NodeType.FUNCTION && match.getAddress() != null) {
                         addedIds.add(match.getId());
                         results.add(new SimilarFunction(
                                 match.getName(),
@@ -263,6 +269,10 @@ public class GraphRAGEngine {
                 graph.getCallers(nodeId) : graph.getCallees(nodeId);
 
         for (KnowledgeNode neighbor : neighbors) {
+            // Skip nodes without addresses (external functions, modules, etc.)
+            if (neighbor.getAddress() == null) {
+                continue;
+            }
             if (visited.contains(neighbor.getId())) continue;
             visited.add(neighbor.getId());
 
@@ -712,10 +722,15 @@ public class GraphRAGEngine {
             sb.append("\n");
         }
 
-        // Raw code (truncated)
-        if (analysis.getRawCode() != null) {
+        if (analysis.getDecompiledCode() != null) {
             sb.append("**Decompiled Code:**\n```c\n");
-            sb.append(truncate(analysis.getRawCode(), 2000));
+            sb.append(truncate(analysis.getDecompiledCode(), 2000));
+            sb.append("\n```\n");
+        }
+
+        if (analysis.getDisassembly() != null) {
+            sb.append("**Disassembly:**\n```asm\n");
+            sb.append(truncate(analysis.getDisassembly(), 2000));
             sb.append("\n```\n");
         }
 

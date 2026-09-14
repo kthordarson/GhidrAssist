@@ -4,7 +4,9 @@ import com.google.gson.JsonObject;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.listing.Program;
 import ghidra.util.Msg;
+import ghidrassist.tools.approval.ToolApprovalService;
 import ghidrassist.tools.api.Tool;
+import ghidrassist.tools.api.ToolExecutionObserver;
 import ghidrassist.tools.api.ToolExecutor;
 import ghidrassist.tools.api.ToolProvider;
 import ghidrassist.tools.api.ToolResult;
@@ -17,8 +19,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
@@ -41,6 +41,10 @@ public class ToolRegistry implements ToolExecutor {
     private final List<ToolProvider> providers = new ArrayList<>();
     private Program currentProgram;
     private Address currentAddress;
+    private volatile ToolExecutionObserver executionObserver;
+    private volatile ToolApprovalService approvalService;
+    private volatile IntSupplier activeSessionSupplier = () -> -1;
+    private volatile Supplier<String> programHashSupplier = () -> null;
 
     /**
      * Register a tool provider.
@@ -129,16 +133,95 @@ public class ToolRegistry implements ToolExecutor {
 
     @Override
     public CompletableFuture<ToolResult> execute(String toolName, JsonObject args) {
-        for (ToolProvider provider : providers) {
-            if (provider.handlesTool(toolName)) {
-                Msg.debug(this, "Routing tool '" + toolName + "' to provider: " + provider.getProviderName());
-                return provider.executeTool(toolName, args);
-            }
+        Tool tool = getTool(toolName);
+        if (tool == null) {
+            Msg.warn(this, "No provider found for tool: " + toolName);
+            return CompletableFuture.completedFuture(
+                    ToolResult.error("Unknown tool: " + toolName));
         }
 
-        Msg.warn(this, "No provider found for tool: " + toolName);
-        return CompletableFuture.completedFuture(
-                ToolResult.error("Unknown tool: " + toolName));
+        int sessionId = activeSessionSupplier != null ? activeSessionSupplier.getAsInt() : -1;
+        String programHash = programHashSupplier != null ? programHashSupplier.get() : null;
+        String correlationId = java.util.UUID.randomUUID().toString();
+
+        if (executionObserver != null && sessionId > 0) {
+            executionObserver.onToolCallRequested(sessionId, programHash, correlationId, tool, args);
+        }
+        Msg.info(this, "Tool requested: " + toolName + " (" + tool.getSource() + ")");
+
+        CompletableFuture<ToolApprovalService.ApprovalOutcome> approvalFuture =
+            approvalService != null
+                ? approvalService.requestApproval(sessionId, programHash, correlationId, tool, args)
+                : CompletableFuture.completedFuture(ToolApprovalService.ApprovalOutcome.approved(
+                    ToolApprovalService.DECISION_ALLOW_ONCE));
+
+        return approvalFuture.thenComposeAsync(outcome -> {
+            if (outcome == null || !outcome.isApproved()) {
+                Msg.warn(this, "Tool denied: " + toolName);
+                if (executionObserver != null && sessionId > 0) {
+                    executionObserver.onToolCallFailed(sessionId, programHash, correlationId, tool, args,
+                            "Execution denied by user");
+                }
+                return CompletableFuture.completedFuture(ToolResult.error("Tool execution denied by user"));
+            }
+
+            for (ToolProvider provider : providers) {
+                if (provider.handlesTool(toolName)) {
+                    Msg.debug(this, "Routing tool '" + toolName + "' to provider: " + provider.getProviderName());
+                    Msg.info(this, "Executing tool '" + toolName + "' via provider " + provider.getProviderName());
+                    if (executionObserver != null && sessionId > 0) {
+                        executionObserver.onToolCallStarted(sessionId, programHash, correlationId, tool, args);
+                    }
+                    return provider.executeTool(toolName, args)
+                            .handle((result, throwable) -> {
+                                if (throwable != null) {
+                                    Msg.warn(this, "Tool failed: " + toolName + " - " + throwable.getMessage());
+                                    if (executionObserver != null && sessionId > 0) {
+                                        executionObserver.onToolCallFailed(sessionId, programHash, correlationId,
+                                                tool, args, throwable.getMessage());
+                                    }
+                                    return ToolResult.error(throwable.getMessage());
+                                }
+
+                                ToolResult safeResult = result != null ? result : ToolResult.error("Tool returned no result");
+                                if (safeResult.isError()) {
+                                    Msg.warn(this, "Tool returned error: " + toolName + " - " + safeResult.getErrorMessage());
+                                } else {
+                                    Msg.info(this, "Tool completed: " + toolName);
+                                }
+                                if (executionObserver != null && sessionId > 0) {
+                                    if (safeResult.isError()) {
+                                        executionObserver.onToolCallFailed(sessionId, programHash, correlationId,
+                                                tool, args, safeResult.getErrorMessage());
+                                    } else {
+                                        executionObserver.onToolCallCompleted(sessionId, programHash, correlationId,
+                                                tool, args, safeResult);
+                                    }
+                                }
+                                return safeResult;
+                            });
+                }
+            }
+
+            Msg.warn(this, "No provider found for tool: " + toolName);
+            return CompletableFuture.completedFuture(ToolResult.error("Unknown tool: " + toolName));
+        });
+    }
+
+    public void setExecutionObserver(ToolExecutionObserver executionObserver) {
+        this.executionObserver = executionObserver;
+    }
+
+    public void setApprovalService(ToolApprovalService approvalService) {
+        this.approvalService = approvalService;
+    }
+
+    public void setActiveSessionSupplier(IntSupplier activeSessionSupplier) {
+        this.activeSessionSupplier = activeSessionSupplier != null ? activeSessionSupplier : () -> -1;
+    }
+
+    public void setProgramHashSupplier(Supplier<String> programHashSupplier) {
+        this.programHashSupplier = programHashSupplier != null ? programHashSupplier : () -> null;
     }
 
     /**

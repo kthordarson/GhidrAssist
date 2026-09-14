@@ -1,6 +1,7 @@
 package ghidrassist.agent.react;
 
 import com.google.gson.JsonObject;
+import java.util.List;
 
 /**
  * Callback interface for tracking ReAct agent progress.
@@ -80,6 +81,25 @@ public interface ReActProgressHandler {
      * @param todosFormatted Current todo list formatted for display
      */
     default void onTodosUpdated(String todosFormatted) {
+        // Default implementation does nothing - can be overridden
+    }
+
+    /**
+     * Called when todos are updated with structured task data.
+     * @param todosFormatted Current todo list formatted for prompts
+     * @param todos Current todo list snapshot
+     * @param compactSummary Compact human-readable progress summary
+     */
+    default void onTodosUpdated(String todosFormatted, List<TodoListManager.Todo> todos, String compactSummary) {
+        onTodosUpdated(todosFormatted);
+    }
+
+    /**
+     * Called when a new investigation iteration starts.
+     * @param iteration Current iteration number (1-based)
+     * @param activeTask The task selected for this iteration, if any
+     */
+    default void onIterationStarted(int iteration, String activeTask) {
         // Default implementation does nothing - can be overridden
     }
 

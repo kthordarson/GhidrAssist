@@ -27,18 +27,33 @@ public class LMStudioProvider extends APIProvider implements FunctionCallingProv
     private static final String LMSTUDIO_EMBEDDINGS_ENDPOINT = "v1/embeddings";
     private volatile boolean isCancelled = false;
 
-    public LMStudioProvider(String name, String model, Integer maxTokens, String url, String key, boolean disableTlsVerification, Integer timeout) {
-        super(name, ProviderType.LMSTUDIO, model, maxTokens, url, key, disableTlsVerification, timeout);
+    public LMStudioProvider(String name, String model, Integer maxTokens, String url, String key,
+                            boolean disableTlsVerification, boolean bypassProxy, Integer timeout) {
+        super(name, ProviderType.LMSTUDIO, model, maxTokens, url, key, disableTlsVerification, bypassProxy, timeout);
     }
 
     @Override
     protected OkHttpClient buildClient() {
         try {
-            OkHttpClient.Builder builder = new OkHttpClient.Builder()
+            OkHttpClient.Builder builder = configureClientBuilder(new OkHttpClient.Builder())
                 .connectTimeout(super.timeout)
                 .readTimeout(super.timeout)
                 .writeTimeout(super.timeout)
-                .retryOnConnectionFailure(true);
+                .retryOnConnectionFailure(true)
+                .addInterceptor(chain -> {
+                    Request originalRequest = chain.request();
+                    Request.Builder requestBuilder = originalRequest.newBuilder()
+                        .header("Content-Type", "application/json");
+
+                    String apiKey = key != null ? key.trim() : "";
+                    if (!apiKey.isEmpty()) {
+                        // Support API-key-protected OpenAI-compatible local endpoints.
+                        // LM Studio itself may not require this, but remote/proxied servers often do.
+                        requestBuilder.header("Authorization", "Bearer " + apiKey);
+                    }
+
+                    return chain.proceed(requestBuilder.build());
+                });
 
             if (disableTlsVerification) {
                 TrustManager[] trustAllCerts = new TrustManager[]{
@@ -146,10 +161,19 @@ public class LMStudioProvider extends APIProvider implements FunctionCallingProv
 
     @Override
     public String createChatCompletionWithFunctionsFullResponse(List<ChatMessage> messages, List<Map<String, Object>> functions) throws APIProviderException {
+        return createChatCompletionWithFunctionsFullResponse(messages, functions, ToolChoiceMode.AUTO);
+    }
+
+    @Override
+    public String createChatCompletionWithFunctionsFullResponse(List<ChatMessage> messages,
+                                                                List<Map<String, Object>> functions,
+                                                                ToolChoiceMode toolChoiceMode) throws APIProviderException {
         JsonObject payload = buildChatCompletionPayload(messages, true); // Enable streaming
 
         // LMStudio uses the modern 'tools' format, not 'functions'
         payload.add("tools", gson.toJsonTree(functions));
+        payload.addProperty("tool_choice",
+            (toolChoiceMode != null ? toolChoiceMode : ToolChoiceMode.AUTO).toOpenAIToolChoice(messages));
 
         Request request = new Request.Builder()
             .url(super.getUrl() + LMSTUDIO_CHAT_ENDPOINT)
@@ -299,13 +323,19 @@ public class LMStudioProvider extends APIProvider implements FunctionCallingProv
 
     @Override
     public String createChatCompletionWithFunctions(List<ChatMessage> messages, List<Map<String, Object>> functions) throws APIProviderException {
+        return createChatCompletionWithFunctions(messages, functions, ToolChoiceMode.AUTO);
+    }
+
+    @Override
+    public String createChatCompletionWithFunctions(List<ChatMessage> messages, List<Map<String, Object>> functions,
+                                                    ToolChoiceMode toolChoiceMode) throws APIProviderException {
         JsonObject payload = buildChatCompletionPayload(messages, false);
 
         // LMStudio uses the modern 'tools' format, not 'functions'
         payload.add("tools", gson.toJsonTree(functions));
 
-        // Use tool_choice instead of function_call for modern tools API
-        payload.addProperty("tool_choice", "auto");
+        payload.addProperty("tool_choice",
+            (toolChoiceMode != null ? toolChoiceMode : ToolChoiceMode.AUTO).toOpenAIToolChoice(messages));
 
         Request request = new Request.Builder()
             .url(super.getUrl() + LMSTUDIO_CHAT_ENDPOINT)
@@ -518,8 +548,19 @@ public class LMStudioProvider extends APIProvider implements FunctionCallingProv
         List<Map<String, Object>> functions,
         StreamingFunctionHandler handler
     ) throws APIProviderException {
+        streamChatCompletionWithFunctions(messages, functions, ToolChoiceMode.AUTO, handler);
+    }
+
+    public void streamChatCompletionWithFunctions(
+        List<ChatMessage> messages,
+        List<Map<String, Object>> functions,
+        ToolChoiceMode toolChoiceMode,
+        StreamingFunctionHandler handler
+    ) throws APIProviderException {
         JsonObject payload = buildChatCompletionPayload(messages, true);
         payload.add("tools", gson.toJsonTree(functions));
+        payload.addProperty("tool_choice",
+            (toolChoiceMode != null ? toolChoiceMode : ToolChoiceMode.AUTO).toOpenAIToolChoice(messages));
 
         Request request = new Request.Builder()
             .url(super.getUrl() + LMSTUDIO_CHAT_ENDPOINT)
@@ -566,7 +607,13 @@ public class LMStudioProvider extends APIProvider implements FunctionCallingProv
                                         .sorted(java.util.Map.Entry.comparingByKey())
                                         .forEach(entry -> {
                                             JsonObject toolCallObj = entry.getValue();
-                                            String id = toolCallObj.has("id") ? toolCallObj.get("id").getAsString() : "call_" + entry.getKey();
+                                            String id = null;
+                                            if (toolCallObj.has("id") && !toolCallObj.get("id").isJsonNull() && toolCallObj.get("id").isJsonPrimitive()) {
+                                                id = toolCallObj.get("id").getAsString();
+                                            }
+                                            if (id == null || id.isEmpty()) {
+                                                id = "call_stream_" + entry.getKey() + "_" + System.currentTimeMillis();
+                                            }
                                             String name = "";
                                             String arguments = "{}";
 

@@ -7,7 +7,9 @@ import com.google.gson.reflect.TypeToken;
 
 import java.lang.reflect.Type;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
@@ -212,58 +214,167 @@ public class MCPServerRegistry {
      */
     private void loadServers() {
         String serversJson = Preferences.getProperty(PREFERENCE_KEY, "[]");
-        
+
         try {
             Gson gson = new Gson();
             Type listType = new TypeToken<List<MCPServerConfig>>(){}.getType();
             List<MCPServerConfig> loadedServers = gson.fromJson(serversJson, listType);
-            
+
             if (loadedServers != null) {
                 // Validate and migrate loaded servers
                 servers = loadedServers.stream()
+                    .map(this::migrateServerConfig)
                     .filter(MCPServerConfig::isValid)
-                    .map(this::migrateServerConfig)  // Apply migration
                     .collect(Collectors.toList());
-                
+
                 Msg.info(this, "Loaded " + servers.size() + " MCP server configurations");
-                
+
                 // Save migrated configurations
                 saveServers();
             }
         } catch (Exception e) {
             Msg.error(this, "Failed to load MCP server configurations: " + e.getMessage());
             servers = new ArrayList<>();
+
+            // Try to recover by parsing and migrating old format
+            try {
+                servers = migrateOldFormat(serversJson);
+                if (!servers.isEmpty()) {
+                    saveServers();
+                }
+            } catch (Exception e2) {
+                Msg.debug(this, "Migration also failed: " + e2.getMessage());
+            }
         }
-        
+
         // Initialize defaults if no servers loaded
         if (servers.isEmpty()) {
             initializeDefaults();
         }
     }
+
+    /**
+     * Attempt to migrate servers from old format that might have STDIO transport.
+     */
+    private List<MCPServerConfig> migrateOldFormat(String serversJson) {
+        List<MCPServerConfig> migrated = new ArrayList<>();
+
+        try {
+            // Parse as generic JSON array
+            com.google.gson.JsonArray array = new Gson().fromJson(serversJson, com.google.gson.JsonArray.class);
+            if (array == null) return migrated;
+
+            for (com.google.gson.JsonElement element : array) {
+                if (!element.isJsonObject()) continue;
+                com.google.gson.JsonObject obj = element.getAsJsonObject();
+
+                String name = getString(obj, "name");
+                if (name == null || name.isBlank()) continue;
+
+                MCPServerConfig.TransportType transport = MCPServerConfig.TransportType.fromString(getString(obj, "transport"));
+                if (transport == null) {
+                    transport = MCPServerConfig.TransportType.SSE;
+                }
+
+                MCPServerConfig config = new MCPServerConfig(name, getString(obj, "url"));
+                config.setTransport(transport);
+                config.setCommand(getString(obj, "command"));
+                config.setArgs(parseStringList(obj.get("args")));
+                config.setEnv(parseStringMap(obj.get("env")));
+                config.setCwd(getString(obj, "cwd"));
+
+                if (obj.has("enabled")) {
+                    config.setEnabled(obj.get("enabled").getAsBoolean());
+                }
+                if (obj.has("description")) {
+                    config.setDescription(obj.get("description").getAsString());
+                }
+
+                if (config.isValid()) {
+                    migrated.add(migrateServerConfig(config));
+                }
+            }
+        } catch (Exception e) {
+            Msg.debug(this, "Old format migration failed: " + e.getMessage());
+        }
+
+        return migrated;
+    }
     
     /**
-     * Migrate server configuration to apply new timeout defaults
+     * Migrate server configuration to apply new timeout defaults and handle transport migration.
      */
     private MCPServerConfig migrateServerConfig(MCPServerConfig server) {
         boolean needsMigration = false;
-        
+
+        // Handle null transport (fallback to SSE)
+        if (server.getTransport() == null) {
+            server.setTransport(MCPServerConfig.TransportType.SSE);
+            Msg.info(this, "Migrated server '" + server.getName() + "' with null transport to SSE");
+            needsMigration = true;
+        }
+
+        // Normalize stdio collections for older saved configs
+        if (server.getArgs().isEmpty()) {
+            server.setArgs(server.getArgs());
+        }
+        if (server.getEnv().isEmpty()) {
+            server.setEnv(server.getEnv());
+        }
+
         // Update old timeout values to new optimized defaults
         if (server.getConnectionTimeout() >= 10) {  // Old default was 10 seconds
             server.setConnectionTimeout(5);  // New optimized default
             needsMigration = true;
         }
-        
-        if (server.getRequestTimeout() >= 30) {  // Old default was 30 seconds  
+
+        if (server.getRequestTimeout() >= 30) {  // Old default was 30 seconds
             server.setRequestTimeout(15);  // New optimized default
             needsMigration = true;
         }
-        
+
         if (needsMigration) {
-            Msg.info(this, "Migrated timeout settings for MCP server: " + server.getName() + 
-                     " (connection: " + server.getConnectionTimeout() + "s, request: " + server.getRequestTimeout() + "s)");
+            Msg.info(this, "Migrated settings for MCP server: " + server.getName() +
+                     " (transport: " + server.getTransport() + ", connection: " + server.getConnectionTimeout() +
+                     "s, request: " + server.getRequestTimeout() + "s)");
         }
-        
+
         return server;
+    }
+
+    private String getString(com.google.gson.JsonObject obj, String key) {
+        if (!obj.has(key) || obj.get(key).isJsonNull()) {
+            return null;
+        }
+        return obj.get(key).getAsString();
+    }
+
+    private List<String> parseStringList(com.google.gson.JsonElement element) {
+        List<String> values = new ArrayList<>();
+        if (element == null || element.isJsonNull() || !element.isJsonArray()) {
+            return values;
+        }
+
+        for (com.google.gson.JsonElement item : element.getAsJsonArray()) {
+            if (!item.isJsonNull()) {
+                values.add(item.getAsString());
+            }
+        }
+        return values;
+    }
+
+    private Map<String, String> parseStringMap(com.google.gson.JsonElement element) {
+        Map<String, String> values = new LinkedHashMap<>();
+        if (element == null || element.isJsonNull() || !element.isJsonObject()) {
+            return values;
+        }
+
+        for (Map.Entry<String, com.google.gson.JsonElement> entry : element.getAsJsonObject().entrySet()) {
+            if (!entry.getValue().isJsonNull()) {
+                values.put(entry.getKey(), entry.getValue().getAsString());
+            }
+        }
+        return values;
     }
     
     /**

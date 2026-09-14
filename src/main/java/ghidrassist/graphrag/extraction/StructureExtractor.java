@@ -29,6 +29,8 @@ import ghidrassist.graphrag.nodes.NodeType;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Extracts structural information from Ghidra binaries and populates the knowledge graph.
@@ -48,6 +50,7 @@ public class StructureExtractor {
     private final BinaryKnowledgeGraph graph;
     private final String binaryId;
     private final TaskMonitor monitor;
+    private final FunctionSignatureGenerator signatureGenerator;
 
     // Statistics (thread-safe)
     private final AtomicInteger functionsExtracted = new AtomicInteger(0);
@@ -68,6 +71,13 @@ public class StructureExtractor {
     // Decompilation retry settings
     private static final int DECOMPILE_BASE_TIMEOUT = 30;  // seconds
     private static final int DECOMPILE_MAX_RETRIES = 3;
+    private static final int MAX_INFERRED_CALL_EDGES_PER_FUNCTION = 64;
+    private static final Pattern HEX_ADDRESS_PATTERN = Pattern.compile("(?i)\\b0x[0-9a-f]{4,16}\\b");
+    private static final Pattern IDENTIFIER_PATTERN = Pattern.compile("\\b[A-Za-z_][A-Za-z0-9_:@$]*\\b");
+    private static final Map<String, int[]> CALLBACK_API_ARGUMENTS = createCallbackApiArgumentMap();
+
+    // Incremental mode: when true, preserves existing semantic data (summaries, embeddings, flags)
+    private boolean incrementalMode = false;
 
     /**
      * Create a StructureExtractor for a program.
@@ -81,6 +91,31 @@ public class StructureExtractor {
         this.graph = graph;
         this.binaryId = graph.getBinaryId();
         this.monitor = monitor;
+        this.signatureGenerator = new FunctionSignatureGenerator(program, monitor);
+    }
+
+    /**
+     * Set incremental mode for non-destructive reindexing.
+     *
+     * When enabled:
+     * - Existing semantic data (summaries, embeddings, flags) is preserved via COALESCE
+     * - Only structural data (names, addresses, edges) is updated
+     * - Nodes are marked stale only if content actually changed
+     *
+     * @param incremental true to enable incremental mode
+     */
+    public void setIncrementalMode(boolean incremental) {
+        this.incrementalMode = incremental;
+        if (incremental) {
+            Msg.info(this, "StructureExtractor: incremental mode enabled (preserving semantic data)");
+        }
+    }
+
+    /**
+     * Check if incremental mode is enabled.
+     */
+    public boolean isIncrementalMode() {
+        return incrementalMode;
     }
 
     /**
@@ -161,7 +196,10 @@ public class StructureExtractor {
 
             // Check if already cached
             KnowledgeNode existing = graph.getNodeByAddress(function.getEntryPoint().getOffset());
-            if (existing != null && existing.getRawContent() != null) {
+            if (existing != null &&
+                existing.getRawContent() != null &&
+                existing.getSignature() != null &&
+                existing.getDisassembly() != null) {
                 // Node exists - but still update edges in case new edge types were added
                 updateFunctionEdges(function, existing);
                 return existing;
@@ -174,6 +212,7 @@ public class StructureExtractor {
 
                 // Extract outgoing calls from this function (what it calls)
                 extractFunctionCalls(function, node.getId());
+                inferFunctionCalls(function, node.getId(), node.getRawContent());
 
                 // Extract incoming calls to this function (what calls it)
                 // This ensures callers list is populated for single-function extraction
@@ -215,10 +254,16 @@ public class StructureExtractor {
             // We use a simple heuristic: if there are no REFERENCES edges from this node, update
             boolean hasReferencesEdges = graph.hasEdgesOfType(node.getId(), EdgeType.REFERENCES);
             boolean hasVulnerableEdges = graph.hasEdgesOfType(node.getId(), EdgeType.CALLS_VULNERABLE);
+            boolean hasInferredCalls = graph.hasEdgesOfType(node.getId(), EdgeType.INFERRED_CALLS);
 
             if (!hasReferencesEdges) {
                 Msg.debug(this, "Updating REFERENCES edges for: " + function.getName());
                 extractFunctionReferences(function, node);
+            }
+
+            if (!hasInferredCalls) {
+                Msg.debug(this, "Updating INFERRED_CALLS edges for: " + function.getName());
+                inferFunctionCalls(function, node.getId(), node.getRawContent());
             }
 
             if (!hasVulnerableEdges) {
@@ -429,7 +474,10 @@ public class StructureExtractor {
 
             // Check if already cached (synchronized read)
             KnowledgeNode existing = graph.getNodeByAddress(address);
-            if (existing != null && existing.getRawContent() != null) {
+            if (existing != null &&
+                existing.getRawContent() != null &&
+                existing.getSignature() != null &&
+                existing.getDisassembly() != null) {
                 // Node exists - update edges in case new edge types were added
                 updateFunctionEdges(function, existing);
                 return;
@@ -444,6 +492,7 @@ public class StructureExtractor {
 
                 // Extract calls from this function (use canonical node ID)
                 extractFunctionCalls(function, node.getId());
+                inferFunctionCalls(function, node.getId(), node.getRawContent());
 
                 // Extract references from this function (REFERENCES edges)
                 extractFunctionReferences(function, node);
@@ -514,6 +563,8 @@ public class StructureExtractor {
     /**
      * Create a function node using a provided decompiler (for parallel execution).
      * Uses thread-local decompiler for parallel decompilation.
+     *
+     * In incremental mode, preserves existing semantic data and only marks stale if content changed.
      */
     private KnowledgeNode createFunctionNodeParallel(Function function, DecompInterface threadDecompiler) {
         try {
@@ -521,44 +572,58 @@ public class StructureExtractor {
             String name = function.getName();
 
             // Check if node already exists
-            KnowledgeNode node = graph.getNodeByAddress(address);
-            if (node == null) {
+            KnowledgeNode existingNode = graph.getNodeByAddress(address);
+            KnowledgeNode node;
+            boolean isExistingNode = (existingNode != null);
+            String oldName = existingNode != null ? existingNode.getName() : null;
+
+            if (existingNode == null) {
                 node = KnowledgeNode.createFunction(binaryId, address, name);
             } else {
+                node = existingNode;
                 node.setName(name); // Update name in case of rename
             }
 
-            // Decompile with retry logic (3 attempts with increasing timeout)
-            String content = null;
+            String decompiledCode = null;
             if (threadDecompiler != null) {
-                content = decompileWithRetry(function, threadDecompiler);
+                decompiledCode = decompileWithRetry(function, threadDecompiler);
             }
 
-            // Fall back to disassembly if decompilation failed
-            if (content == null || content.isEmpty()) {
-                Msg.info(this, "Falling back to disassembly for: " + function.getName());
-                try {
-                    content = getDisassembly(function);
-                } catch (Exception e) {
-                    Msg.error(this, "Disassembly also failed for " + function.getName() +
-                        ": " + e.getMessage());
+            String disassembly = null;
+            try {
+                disassembly = getDisassembly(function);
+            } catch (Exception e) {
+                Msg.error(this, "Disassembly failed for " + function.getName() +
+                    ": " + e.getMessage());
+            }
+
+            String content = getPrimaryContent(function, decompiledCode, disassembly);
+            String signature = signatureGenerator.generate(function);
+
+            // In incremental mode, check if content actually changed before marking stale
+            if (incrementalMode && isExistingNode) {
+                boolean contentChanged = shouldMarkStale(existingNode, oldName, name, content);
+                applyFunctionCodeFields(node, signature, decompiledCode, disassembly, content);
+                if (contentChanged) {
+                    node.markStale();
+                    Msg.debug(this, "Content changed for " + name + ", marking stale");
+                } else {
+                    // Content unchanged - keep existing content and clear stale flag
+                    // (we marked all nodes stale at the start of reindex)
+                    node.setStale(false);
+                    Msg.debug(this, "Content unchanged for " + name + ", preserving semantic data");
                 }
+            } else {
+                // Non-incremental mode or new node - always update content
+                applyFunctionCodeFields(node, signature, decompiledCode, disassembly, content);
+                node.markStale();
             }
-
-            // Guarantee non-null content
-            if (content == null || content.isEmpty()) {
-                content = "// Unable to decompile or disassemble: " + function.getName();
-                Msg.error(this, "All extraction methods failed for: " + function.getName() +
-                    " at " + function.getEntryPoint());
-            }
-
-            node.setRawContent(content);
 
             // Extract security features (network APIs, file I/O, strings)
-            extractSecurityFeatures(function, node);
-
-            // Mark as needing LLM summary
-            node.markStale();
+            // In incremental mode, only update if we don't already have flags
+            if (!incrementalMode || !node.hasSecurityFlags()) {
+                extractSecurityFeatures(function, node);
+            }
 
             return node;
         } catch (Exception e) {
@@ -567,34 +632,125 @@ public class StructureExtractor {
         }
     }
 
+    /**
+     * Check if a node's content has changed significantly and needs re-summarization.
+     *
+     * In incremental mode, we only want to mark nodes stale if:
+     * - The function name changed
+     * - The decompiled content changed significantly (ignoring whitespace differences)
+     *
+     * This preserves existing LLM summaries for unchanged functions.
+     *
+     * @param existing   The existing node from the database
+     * @param newName    The new function name from Ghidra
+     * @param newContent The new decompiled content
+     * @return true if the node should be marked stale for re-summarization
+     */
+    private boolean shouldMarkStale(KnowledgeNode existing, String newName, String newContent) {
+        return shouldMarkStale(existing, existing != null ? existing.getName() : null, newName, newContent);
+    }
+
+    private boolean shouldMarkStale(KnowledgeNode existing, String oldName, String newName, String newContent) {
+        if (existing == null) {
+            return true; // New node, needs summarization
+        }
+
+        // User-edited summaries are never overwritten
+        if (existing.isUserEdited()) {
+            return false;
+        }
+
+        // Name changed
+        if (!java.util.Objects.equals(oldName, newName)) {
+            return true;
+        }
+
+        // Content changed (compare normalized, ignoring whitespace)
+        String existingNorm = normalizeContent(existing.getRawContent());
+        String newNorm = normalizeContent(newContent);
+        return !java.util.Objects.equals(existingNorm, newNorm);
+    }
+
+    /**
+     * Normalize content for comparison by removing excessive whitespace.
+     */
+    private String normalizeContent(String s) {
+        if (s == null) {
+            return "";
+        }
+        return s.replaceAll("\\s+", " ").trim();
+    }
+
+    private String getPrimaryContent(Function function, String decompiledCode, String disassembly) {
+        if (decompiledCode != null && !decompiledCode.isEmpty()) {
+            return decompiledCode;
+        }
+        if (disassembly != null && !disassembly.isEmpty()) {
+            Msg.info(this, "Falling back to disassembly for: " + function.getName());
+            return disassembly;
+        }
+
+        String fallback = "// Unable to decompile or disassemble: " + function.getName();
+        Msg.error(this, "All extraction methods failed for: " + function.getName() +
+            " at " + function.getEntryPoint());
+        return fallback;
+    }
+
+    private void applyFunctionCodeFields(KnowledgeNode node, String signature, String decompiledCode,
+                                         String disassembly, String primaryContent) {
+        node.setSignature(signature);
+        node.setDecompiledCode(decompiledCode);
+        node.setDisassembly(disassembly);
+        node.setRawContent(primaryContent);
+    }
+
     private KnowledgeNode createFunctionNode(Function function) {
         try {
             long address = function.getEntryPoint().getOffset();
             String name = function.getName();
 
             // Check if node already exists
-            KnowledgeNode node = graph.getNodeByAddress(address);
-            if (node == null) {
+            KnowledgeNode existingNode = graph.getNodeByAddress(address);
+            KnowledgeNode node;
+            boolean isExistingNode = (existingNode != null);
+            String oldName = existingNode != null ? existingNode.getName() : null;
+
+            if (existingNode == null) {
                 node = KnowledgeNode.createFunction(binaryId, address, name);
             } else {
+                node = existingNode;
                 node.setName(name); // Update name in case of rename
             }
 
-            // Decompile and store raw content
+            String decompiledCode = null;
             DecompileResults results = decompiler.decompileFunction(function, 60, monitor);
             if (results != null && results.decompileCompleted()) {
-                String code = results.getDecompiledFunction().getC();
-                node.setRawContent(code);
+                decompiledCode = results.getDecompiledFunction().getC();
+            }
+            String disassembly = getDisassembly(function);
+            String content = getPrimaryContent(function, decompiledCode, disassembly);
+            String signature = signatureGenerator.generate(function);
+
+            // In incremental mode, check if content actually changed before marking stale
+            if (incrementalMode && isExistingNode) {
+                boolean contentChanged = shouldMarkStale(existingNode, oldName, name, content);
+                applyFunctionCodeFields(node, signature, decompiledCode, disassembly, content);
+                if (contentChanged) {
+                    node.markStale();
+                } else {
+                    // Content unchanged - preserve semantic data
+                    node.setStale(false);
+                }
             } else {
-                // Fall back to disassembly
-                node.setRawContent(getDisassembly(function));
+                applyFunctionCodeFields(node, signature, decompiledCode, disassembly, content);
+                node.markStale();
             }
 
             // Extract security features (network APIs, file I/O, strings)
-            extractSecurityFeatures(function, node);
-
-            // Mark as needing LLM summary
-            node.markStale();
+            // In incremental mode, only update if we don't already have flags
+            if (!incrementalMode || !node.hasSecurityFlags()) {
+                extractSecurityFeatures(function, node);
+            }
 
             return node;
         } catch (Exception e) {
@@ -612,7 +768,7 @@ public class StructureExtractor {
         try {
             SecurityFeatureExtractor secExtractor = new SecurityFeatureExtractor(program, monitor);
             // Pass decompiled code for additional API call detection via regex
-            String decompiledCode = node.getRawContent();
+            String decompiledCode = node.getDecompiledCode();
             SecurityFeatures features = secExtractor.extractFeatures(function, decompiledCode);
 
             if (!features.isEmpty()) {
@@ -746,6 +902,287 @@ public class StructureExtractor {
         if (debugThis) {
             Msg.info(this, String.format("[%s] Total call targets processed: %d", caller.getName(), processedTargets.size()));
         }
+    }
+
+    private void inferFunctionCalls(Function caller, String callerNodeId, String content) {
+        if (caller == null || callerNodeId == null || content == null || content.isBlank()) {
+            return;
+        }
+
+        FunctionManager funcMgr = program.getFunctionManager();
+        Set<Long> inferredTargets = new HashSet<>();
+        Map<String, Function> functionsByName = buildFunctionNameIndex(funcMgr);
+
+        Matcher matcher = HEX_ADDRESS_PATTERN.matcher(content);
+        while (matcher.find() && inferredTargets.size() < MAX_INFERRED_CALL_EDGES_PER_FUNCTION) {
+            try {
+                Function target = resolveFunctionByAddress(funcMgr, matcher.group());
+                queueInferredCall(caller, callerNodeId, target, inferredTargets, "address_reference");
+            } catch (Exception e) {
+                Msg.debug(this, "Failed to infer call from address token: " + e.getMessage());
+            }
+        }
+
+        inferCallbackApiCalls(caller, callerNodeId, content, funcMgr, functionsByName, inferredTargets);
+    }
+
+    private void inferCallbackApiCalls(Function caller, String callerNodeId, String content,
+                                       FunctionManager funcMgr, Map<String, Function> functionsByName,
+                                       Set<Long> inferredTargets) {
+        for (Map.Entry<String, int[]> entry : CALLBACK_API_ARGUMENTS.entrySet()) {
+            if (inferredTargets.size() >= MAX_INFERRED_CALL_EDGES_PER_FUNCTION || monitor.isCancelled()) {
+                return;
+            }
+
+            String apiName = entry.getKey();
+            Pattern callPattern = Pattern.compile("(?i)\\b" + Pattern.quote(apiName) + "\\s*\\(");
+            Matcher matcher = callPattern.matcher(content);
+            while (matcher.find() && inferredTargets.size() < MAX_INFERRED_CALL_EDGES_PER_FUNCTION) {
+                int openParen = content.indexOf('(', matcher.start());
+                int closeParen = findMatchingParen(content, openParen);
+                if (openParen < 0 || closeParen <= openParen) {
+                    continue;
+                }
+
+                List<String> args = splitArguments(content.substring(openParen + 1, closeParen));
+                for (int argIndex : entry.getValue()) {
+                    if (argIndex >= args.size()) {
+                        continue;
+                    }
+                    Function target = resolveCallbackArgument(funcMgr, functionsByName, args.get(argIndex));
+                    queueInferredCall(caller, callerNodeId, target, inferredTargets,
+                            "callback_argument:" + apiName);
+                }
+            }
+        }
+    }
+
+    private Map<String, Function> buildFunctionNameIndex(FunctionManager funcMgr) {
+        Map<String, Function> index = new HashMap<>();
+        FunctionIterator functions = funcMgr.getFunctions(true);
+        while (functions.hasNext() && !monitor.isCancelled()) {
+            Function function = functions.next();
+            if (function == null || function.isExternal() || function.isThunk()) {
+                continue;
+            }
+            addFunctionNameAlias(index, function.getName(), function);
+            addFunctionNameAlias(index, function.getName(true), function);
+        }
+        return index;
+    }
+
+    private void addFunctionNameAlias(Map<String, Function> index, String name, Function function) {
+        if (name == null || name.isBlank()) {
+            return;
+        }
+        index.putIfAbsent(name.toLowerCase(Locale.ROOT), function);
+    }
+
+    private Function resolveCallbackArgument(FunctionManager funcMgr, Map<String, Function> functionsByName,
+                                             String argument) {
+        if (argument == null || argument.isBlank()) {
+            return null;
+        }
+
+        Matcher addressMatcher = HEX_ADDRESS_PATTERN.matcher(argument);
+        while (addressMatcher.find()) {
+            Function target = resolveFunctionByAddress(funcMgr, addressMatcher.group());
+            if (target != null) {
+                return target;
+            }
+        }
+
+        Matcher identifierMatcher = IDENTIFIER_PATTERN.matcher(argument);
+        Function fallback = null;
+        while (identifierMatcher.find()) {
+            String token = normalizeCallbackIdentifier(identifierMatcher.group());
+            if (token.isBlank() || isCallbackNoiseToken(token)) {
+                continue;
+            }
+            Function target = functionsByName.get(token.toLowerCase(Locale.ROOT));
+            if (target != null) {
+                return target;
+            }
+            if (fallback == null) {
+                fallback = functionsByName.get(stripNamespace(token).toLowerCase(Locale.ROOT));
+            }
+        }
+        return fallback;
+    }
+
+    private Function resolveFunctionByAddress(FunctionManager funcMgr, String addressToken) {
+        try {
+            String value = addressToken.trim();
+            if (value.startsWith("0x") || value.startsWith("0X")) {
+                value = value.substring(2);
+            }
+            long offset = Long.parseUnsignedLong(value, 16);
+            Address address = program.getAddressFactory().getDefaultAddressSpace().getAddress(offset);
+            Function target = funcMgr.getFunctionAt(address);
+            return target != null ? target : funcMgr.getFunctionContaining(address);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private int findMatchingParen(String text, int openParen) {
+        if (openParen < 0 || openParen >= text.length() || text.charAt(openParen) != '(') {
+            return -1;
+        }
+        int depth = 0;
+        boolean inString = false;
+        char stringQuote = 0;
+        for (int i = openParen; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (inString) {
+                if (c == stringQuote && (i == 0 || text.charAt(i - 1) != '\\')) {
+                    inString = false;
+                }
+                continue;
+            }
+            if (c == '"' || c == '\'') {
+                inString = true;
+                stringQuote = c;
+                continue;
+            }
+            if (c == '(') {
+                depth++;
+            } else if (c == ')') {
+                depth--;
+                if (depth == 0) {
+                    return i;
+                }
+            }
+        }
+        return -1;
+    }
+
+    private List<String> splitArguments(String arguments) {
+        List<String> result = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        int depth = 0;
+        boolean inString = false;
+        char stringQuote = 0;
+        for (int i = 0; i < arguments.length(); i++) {
+            char c = arguments.charAt(i);
+            if (inString) {
+                current.append(c);
+                if (c == stringQuote && (i == 0 || arguments.charAt(i - 1) != '\\')) {
+                    inString = false;
+                }
+                continue;
+            }
+            if (c == '"' || c == '\'') {
+                inString = true;
+                stringQuote = c;
+                current.append(c);
+                continue;
+            }
+            if (c == '(' || c == '[' || c == '{') {
+                depth++;
+            } else if (c == ')' || c == ']' || c == '}') {
+                depth = Math.max(0, depth - 1);
+            } else if (c == ',' && depth == 0) {
+                result.add(current.toString().trim());
+                current.setLength(0);
+                continue;
+            }
+            current.append(c);
+        }
+        if (!current.toString().trim().isEmpty()) {
+            result.add(current.toString().trim());
+        }
+        return result;
+    }
+
+    private String normalizeCallbackIdentifier(String token) {
+        String normalized = token.trim();
+        while (normalized.startsWith("&") || normalized.startsWith("*")) {
+            normalized = normalized.substring(1).trim();
+        }
+        return normalized;
+    }
+
+    private boolean isCallbackNoiseToken(String token) {
+        String lower = token.toLowerCase(Locale.ROOT);
+        return lower.equals("null")
+                || lower.equals("0")
+                || lower.equals("true")
+                || lower.equals("false")
+                || lower.equals("sizeof")
+                || lower.equals("lpthread_start_routine")
+                || lower.equals("pthread_start_routine")
+                || lower.equals("thread_proc")
+                || lower.equals("void")
+                || lower.equals("int")
+                || lower.equals("long")
+                || lower.equals("undefined")
+                || lower.equals("undefined4")
+                || lower.equals("undefined8");
+    }
+
+    private String stripNamespace(String token) {
+        int namespaceIdx = token.lastIndexOf("::");
+        if (namespaceIdx >= 0 && namespaceIdx + 2 < token.length()) {
+            return token.substring(namespaceIdx + 2);
+        }
+        int dotIdx = token.lastIndexOf('.');
+        return dotIdx >= 0 && dotIdx + 1 < token.length() ? token.substring(dotIdx + 1) : token;
+    }
+
+    private static Map<String, int[]> createCallbackApiArgumentMap() {
+        Map<String, int[]> map = new LinkedHashMap<>();
+        map.put("CreateThread", new int[] {2});
+        map.put("CreateRemoteThread", new int[] {3});
+        map.put("CreateRemoteThreadEx", new int[] {3});
+        map.put("_beginthread", new int[] {0});
+        map.put("_beginthreadex", new int[] {2});
+        map.put("beginthread", new int[] {0});
+        map.put("beginthreadex", new int[] {2});
+        map.put("pthread_create", new int[] {2});
+        map.put("QueueUserWorkItem", new int[] {0});
+        map.put("CreateTimerQueueTimer", new int[] {3});
+        map.put("RegisterWaitForSingleObject", new int[] {2});
+        map.put("SetTimer", new int[] {3});
+        map.put("EnumWindows", new int[] {0});
+        map.put("EnumChildWindows", new int[] {1});
+        map.put("EnumThreadWindows", new int[] {1});
+        map.put("EnumDesktopWindows", new int[] {1});
+        map.put("EnumResourceNamesA", new int[] {2});
+        map.put("EnumResourceNamesW", new int[] {2});
+        map.put("signal", new int[] {1});
+        map.put("sigaction", new int[] {1});
+        map.put("atexit", new int[] {0});
+        map.put("qsort", new int[] {3});
+        map.put("bsearch", new int[] {4});
+        return Collections.unmodifiableMap(map);
+    }
+
+    private void queueInferredCall(Function caller, String callerNodeId, Function target,
+                                   Set<Long> inferredTargets, String reason) {
+        if (target == null || target.equals(caller) || target.isExternal() || target.isThunk()) {
+            return;
+        }
+
+        long targetOffset = target.getEntryPoint().getOffset();
+        if (!inferredTargets.add(targetOffset)) {
+            return;
+        }
+
+        KnowledgeNode targetNode = graph.getNodeByAddress(targetOffset);
+        if (targetNode == null) {
+            targetNode = KnowledgeNode.createFunction(binaryId, targetOffset, target.getName());
+            targetNode.markStale();
+            targetNode = graph.queueNodeForBatch(targetNode);
+        }
+
+        if (graph.hasEdgeBetween(callerNodeId, targetNode.getId(), EdgeType.CALLS)
+                || graph.hasEdgeBetween(callerNodeId, targetNode.getId(), EdgeType.INFERRED_CALLS)) {
+            return;
+        }
+
+        String metadata = "{\"source\":\"" + reason + "\",\"confidence\":\"heuristic\"}";
+        graph.queueEdgeForBatch(callerNodeId, targetNode.getId(), EdgeType.INFERRED_CALLS, 0.55, metadata);
     }
 
     /**

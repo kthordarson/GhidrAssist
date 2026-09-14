@@ -25,15 +25,22 @@ public class ContextWindowManager {
     private final ContextWindowConfig config;
     private final TokenCounter tokenCounter;
     private final LlmApi llmApi; // For LLM-based summarization (optional)
+    private final ContextWindowListener listener;
 
     public ContextWindowManager(ContextWindowConfig config, TokenCounter tokenCounter) {
-        this(config, tokenCounter, null);
+        this(config, tokenCounter, null, null);
     }
 
     public ContextWindowManager(ContextWindowConfig config, TokenCounter tokenCounter, LlmApi llmApi) {
+        this(config, tokenCounter, llmApi, null);
+    }
+
+    public ContextWindowManager(ContextWindowConfig config, TokenCounter tokenCounter, LlmApi llmApi,
+                                ContextWindowListener listener) {
         this.config = config;
         this.tokenCounter = tokenCounter;
         this.llmApi = llmApi;
+        this.listener = listener;
     }
 
     /**
@@ -51,27 +58,62 @@ public class ContextWindowManager {
         CompletableFuture<List<ChatMessage>> future = new CompletableFuture<>();
 
         try {
-            // Get current status
+            // Phase 1: Remove orphaned tool calls first
+            List<ChatMessage> cleaned = removeOrphanedToolCalls(conversationHistory);
+            if (cleaned.size() != conversationHistory.size()) {
+                conversationHistory.clear();
+                conversationHistory.addAll(cleaned);
+            }
+
+            // Phase 2: Check token count
             ContextStatus status = getStatus(conversationHistory, tools).join();
 
             // If within limits, return original history
             if (!status.needsCompression()) {
                 Msg.debug(this, "Context within limits: " + status);
+                notifyStatus(status);
                 future.complete(conversationHistory);
                 return future;
             }
 
-            // Compression needed
+            // Phase 3: Compression needed - LLM summarize with extractive fallback
             Msg.info(this, "Context compression needed: " + status);
+            notifyStatus(status);
+            int originalMessageCount = conversationHistory.size();
 
-            // Perform compression
             compressHistory(conversationHistory)
                 .thenAccept(compressedHistory -> {
                     Msg.info(this, String.format(
                         "Context compressed: %d → %d messages",
                         conversationHistory.size(), compressedHistory.size()
                     ));
-                    future.complete(compressedHistory);
+
+                    // Phase 4: Re-check after compression - emergency truncate if still over
+                    ContextStatus postStatus = getStatus(compressedHistory, tools).join();
+                    notifyStatus(postStatus);
+                    if (compressedHistory.size() < originalMessageCount) {
+                        notifyCompacted(
+                            buildCompactionSummary(status, postStatus, originalMessageCount, compressedHistory.size()),
+                            originalMessageCount,
+                            compressedHistory.size()
+                        );
+                    }
+                    if (postStatus.needsCompression()) {
+                        Msg.warn(this, "Still over threshold after compression, applying emergency truncation: " + postStatus);
+                        List<ChatMessage> emergency = emergencyTruncate(compressedHistory);
+                        notifyStatus(getStatus(emergency, tools).join());
+                        if (emergency.size() < compressedHistory.size()) {
+                            notifyCompacted(
+                                buildCompactionSummary(postStatus, getStatus(emergency, tools).join(),
+                                    compressedHistory.size(), emergency.size()),
+                                compressedHistory.size(),
+                                emergency.size()
+                            );
+                        }
+                        future.complete(emergency);
+                    } else {
+                        future.complete(compressedHistory);
+                    }
                 })
                 .exceptionally(throwable -> {
                     Msg.error(this, "Context compression failed: " + throwable.getMessage(), throwable);
@@ -230,6 +272,79 @@ public class ContextWindowManager {
     }
 
     /**
+     * Emergency truncation when compression isn't sufficient.
+     * Two-pass approach matching BinAssist's strategy:
+     * Pass 1: Truncate all tool results to 1/4 of normal maxToolResultTokens
+     * Pass 2: Keep only system + last N messages with complete tool pairs
+     *
+     * @param messages Conversation messages
+     * @return Truncated messages
+     */
+    private List<ChatMessage> emergencyTruncate(List<ChatMessage> messages) {
+        Msg.info(this, "Emergency truncation: starting with " + messages.size() + " messages");
+
+        int emergencyMaxTokens = config.getMaxToolResultTokens() / config.getEmergencyTruncationFactor();
+
+        // Pass 1: Truncate all tool results aggressively
+        for (ChatMessage msg : messages) {
+            if (ChatMessage.ChatMessageRole.TOOL.equals(msg.getRole()) &&
+                msg.getContent() != null && !msg.getContent().isEmpty()) {
+                String truncated = truncateToolResult(msg.getContent(), emergencyMaxTokens);
+                msg.setContent(truncated);
+            }
+        }
+
+        // Check if Pass 1 was sufficient
+        int tokensAfterPass1 = tokenCounter.countTokens(messages);
+        if (tokensAfterPass1 <= config.getCompressionThresholdTokens()) {
+            Msg.info(this, "Emergency truncation Pass 1 sufficient: " + tokensAfterPass1 + " tokens");
+            return messages;
+        }
+
+        // Pass 2: Keep system messages + last N messages, preserving tool pairs
+        Msg.info(this, "Emergency truncation Pass 2: keeping system + recent messages");
+        List<ChatMessage> result = new ArrayList<>();
+        List<ChatMessage> systemMessages = new ArrayList<>();
+        List<ChatMessage> nonSystemMessages = new ArrayList<>();
+
+        for (ChatMessage msg : messages) {
+            if (ChatMessage.ChatMessageRole.SYSTEM.equals(msg.getRole())) {
+                systemMessages.add(msg);
+            } else {
+                nonSystemMessages.add(msg);
+            }
+        }
+
+        result.addAll(systemMessages);
+
+        // Walk backwards to keep complete tool pairs, targeting preserveRecentMessages
+        int keepCount = config.getPreserveRecentMessages();
+        int startIdx = Math.max(0, nonSystemMessages.size() - keepCount);
+
+        // Adjust startIdx backwards to not split a tool pair
+        while (startIdx > 0) {
+            ChatMessage msg = nonSystemMessages.get(startIdx);
+            if (ChatMessage.ChatMessageRole.TOOL.equals(msg.getRole())) {
+                startIdx--; // Don't start on a tool result, include its tool call
+            } else {
+                break;
+            }
+        }
+
+        for (int i = startIdx; i < nonSystemMessages.size(); i++) {
+            result.add(nonSystemMessages.get(i));
+        }
+
+        // Final cleanup of orphaned tool calls
+        result = removeOrphanedToolCalls(result);
+
+        Msg.info(this, String.format("Emergency truncation complete: %d → %d messages, ~%d tokens",
+            messages.size(), result.size(), tokenCounter.countTokens(result)));
+
+        return result;
+    }
+
+    /**
      * Compress conversation history when threshold exceeded.
      * Preserves system messages, recent messages, and complete tool pairs.
      * Summarizes older messages using LLM.
@@ -279,7 +394,15 @@ public class ContextWindowManager {
                 }
             }
 
-            // 5. Summarize older messages
+            // 5. Truncate tool results in toSummarize before sending to LLM summarizer
+            for (ChatMessage msg : toSummarize) {
+                if (ChatMessage.ChatMessageRole.TOOL.equals(msg.getRole()) &&
+                    msg.getContent() != null && msg.getContent().length() > 2000) {
+                    msg.setContent(msg.getContent().substring(0, 2000) + "\n[... truncated for summarization ...]");
+                }
+            }
+
+            // 6. Summarize older messages
             if (!toSummarize.isEmpty() && config.isEnableLlmSummarization() && llmApi != null) {
                 summarizeMessages(toSummarize)
                     .thenAccept(summaryText -> {
@@ -430,5 +553,34 @@ public class ContextWindowManager {
     // Getters
     public ContextWindowConfig getConfig() {
         return config;
+    }
+
+    private void notifyStatus(ContextStatus status) {
+        if (listener != null && status != null) {
+            listener.onStatusUpdated(status);
+        }
+    }
+
+    private void notifyCompacted(String summary, int originalMessageCount, int finalMessageCount) {
+        if (listener != null) {
+            listener.onContextCompacted(summary, originalMessageCount, finalMessageCount);
+        }
+    }
+
+    private String buildCompactionSummary(ContextStatus before, ContextStatus after,
+                                          int originalMessageCount, int finalMessageCount) {
+        String beforeSummary = before != null
+            ? before.getCurrentTokens() + "/" + before.getMaxTokens() + " tokens"
+            : "unknown";
+        String afterSummary = after != null
+            ? after.getCurrentTokens() + "/" + after.getMaxTokens() + " tokens"
+            : "unknown";
+        return String.format(
+            "Compacted conversation history from %d to %d messages.\n\nBefore: %s\nAfter: %s",
+            originalMessageCount,
+            finalMessageCount,
+            beforeSummary,
+            afterSummary
+        );
     }
 }

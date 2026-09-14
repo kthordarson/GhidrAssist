@@ -1,9 +1,9 @@
 # Settings Tab Reference
 
-The Settings tab configures LLM providers, MCP servers, and analysis options for GhidrAssist.
+The Settings tab configures LLM providers, MCP servers, SymGraph, and analysis options for GhidrAssist.
 
 ![Settings Tab Overview](../screenshots/settings-tab-full.png)
-<!-- SCREENSHOT: Full Settings tab showing LLM Providers, MCP Servers, System Prompt, Database Paths, Analysis Options -->
+<!-- SCREENSHOT: Full Settings tab showing LLM Providers, MCP Servers, SymGraph, System Prompt, Database Paths, Analysis Options -->
 
 ## LLM Providers Section
 
@@ -24,6 +24,7 @@ This section manages the LLM providers that power GhidrAssist.
 
 - **Add**: Create a new provider configuration
 - **Edit**: Modify the selected provider
+- **Duplicate**: Duplicate the selected provider
 - **Delete**: Remove the selected provider
 - **Test**: Verify the selected provider
 
@@ -80,16 +81,31 @@ Configure Model Context Protocol (MCP) servers that provide tools.
 | Column | Description |
 |--------|-------------|
 | **Name** | Server name |
-| **URL** | Server endpoint |
+| **Target** | Remote URL for HTTP/SSE servers, or the command for stdio servers |
 | **Enabled** | Whether the server is active |
-| **Transport** | HTTP / SSE / Stdio |
+| **Transport** | Streamable HTTP / SSE / Stdio |
 
 ### MCP Management Buttons
 
 - **Add Server**: Configure a new MCP server
 - **Edit**: Modify selected server
+- **Duplicate**: Duplicate the selected server
 - **Remove**: Delete selected server
 - **Test Connection**: Verify connectivity
+
+### Add/Edit MCP Server Dialog
+
+The MCP dialog changes based on transport:
+
+- **SSE / Streamable HTTP**: Enter the remote server URL.
+- **Stdio**: Enter the command, optional arguments, optional working directory, and optional environment JSON.
+
+For stdio servers:
+
+- **Command**: Executable to launch, such as `python`, `uvx`, or `npx`
+- **Arguments**: Shell-style arguments or a JSON array of strings
+- **Working Directory**: Optional process working directory
+- **Environment JSON**: Optional JSON object of string key/value pairs
 
 ### Recommended MCP Server
 
@@ -99,6 +115,18 @@ Configure Model Context Protocol (MCP) servers that provide tools.
 - Cross-references and navigation
 - Symbol lookup
 - Semantic graph queries
+
+## SymGraph Section
+
+Configure the SymGraph cloud service for symbol sharing.
+
+Fields:
+- **API URL**: Default `https://symgraph.ai`
+- **API Key**: Required for push/pull operations
+- **Show/Hide**: Toggle visibility
+- **Test Connection**: Verify credentials
+
+SymGraph accounts are required for import and publish operations. See the [SymGraph Tab](symgraph-tab.md).
 
 ## System Prompt Section
 
@@ -124,10 +152,11 @@ Configure local storage paths:
 Additional analysis controls:
 
 - **Max Tool Calls/Iteration**: Limits tool calls in ReAct loops
-- **API Timeout (seconds)**: Request timeout for LLM APIs
+- **API Timeout (seconds)**: Request timeout for LLM APIs, including ReAct planning/synthesis and non-streaming tool-calling requests
 
 ## Related Documentation
 
 - [Getting Started](../getting-started.md)
 - [Query Tab](query-tab.md) - MCP usage
+- [SymGraph Tab](symgraph-tab.md) - SymGraph operations
 - [RAG Tab](rag-tab.md) - Document management

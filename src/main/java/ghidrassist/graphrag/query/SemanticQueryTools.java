@@ -21,6 +21,7 @@ import ghidrassist.graphrag.extraction.StructureExtractor;
 import ghidrassist.graphrag.nodes.KnowledgeNode;
 import ghidrassist.mcp2.tools.MCPTool;
 import ghidrassist.mcp2.tools.MCPToolResult;
+import ghidrassist.services.symgraph.SymGraphUtils;
 
 import ghidra.program.model.symbol.Reference;
 import ghidra.program.model.symbol.ReferenceIterator;
@@ -315,11 +316,12 @@ public class SemanticQueryTools {
         // 15. ga.create_edge
         tools.add(createTool(
                 TOOL_PREFIX + "create_edge",
-                "Create a semantic relationship edge between two functions based on your analysis. " +
+                "Create a relationship edge between two functions based on your analysis. " +
                 "Use this to record relationships you discover during code review that aren't captured " +
-                "by the structural call graph. Edge types: SIMILAR_PURPOSE (functions with similar behavior), " +
-                "RELATED_TO (general semantic relationship), DEPENDS_ON (functional dependency), " +
-                "IMPLEMENTS (implements a concept like 'authentication' or 'encryption'). " +
+                "by the structural call graph. Allowed edge types — Semantic: SIMILAR_PURPOSE, RELATED_TO, " +
+                "DEPENDS_ON, IMPLEMENTS; Security: VULNERABLE_VIA, TAINT_FLOWS_TO, CALLS_VULNERABLE, " +
+                "NETWORK_SEND, NETWORK_RECV; Community: BELONGS_TO_COMMUNITY, SIBLING. " +
+                "Structural types (CONTAINS, CALLS, FLOWS_TO, REFERENCES, INHERITS) are NOT allowed. " +
                 "Edges are persisted to the knowledge graph. NO LLM call.",
                 createSchema(
                         Map.of(
@@ -328,7 +330,9 @@ public class SemanticQueryTools {
                                 "target_address", Map.of("type", "string", "description", "Target function address (hex)"),
                                 "target_name", Map.of("type", "string", "description", "Target function name (alternative to address)"),
                                 "edge_type", Map.of("type", "string", "description",
-                                        "Edge type: SIMILAR_PURPOSE, RELATED_TO, DEPENDS_ON, IMPLEMENTS"),
+                                        "Edge type: SIMILAR_PURPOSE, RELATED_TO, DEPENDS_ON, IMPLEMENTS, " +
+                                        "VULNERABLE_VIA, TAINT_FLOWS_TO, CALLS_VULNERABLE, NETWORK_SEND, " +
+                                        "NETWORK_RECV, BELONGS_TO_COMMUNITY, SIBLING"),
                                 "confidence", Map.of("type", "number", "description", "Confidence score 0.0-1.0 (default: 0.8)"),
                                 "reason", Map.of("type", "string", "description", "Brief explanation of the relationship")
                         ),
@@ -390,6 +394,8 @@ public class SemanticQueryTools {
                         return executeFindTaintPaths(arguments);
                     case "ga_create_edge":
                         return executeCreateEdge(arguments);
+                    case "ga_refresh_names":
+                        return executeRefreshNames(arguments);
                     default:
                         return MCPToolResult.error("Unknown tool: " + toolName);
                 }
@@ -420,7 +426,8 @@ public class SemanticQueryTools {
                lowerName.equals("ga_detect_communities") ||
                lowerName.equals("ga_global_query") ||
                lowerName.equals("ga_find_taint_paths") ||
-               lowerName.equals("ga_create_edge");
+               lowerName.equals("ga_create_edge") ||
+               lowerName.equals("ga_refresh_names");
     }
 
     // ========================================
@@ -820,12 +827,16 @@ public class SemanticQueryTools {
             return false;
         }
 
-        String currentName = function.getName();
+        // Use qualified name to include namespace (e.g., "Class::method")
+        String currentName = SymGraphUtils.getQualifiedFunctionName(function);
         String storedName = node.getName();
 
         if (currentName != null && !currentName.equals(storedName)) {
             Msg.info(this, "Updating stale function name: " + storedName + " -> " + currentName);
             node.setName(currentName);
+            if (!node.isUserEdited()) {
+                node.markStale();
+            }
             graph.upsertNode(node);  // FTS index auto-updates via trigger
             return true;
         }
@@ -988,7 +999,7 @@ public class SemanticQueryTools {
             Msg.info(this, "get_activity_analysis: Extracting fresh features for " + function.getName());
             SecurityFeatureExtractor extractor = new SecurityFeatureExtractor(currentProgram, TaskMonitor.DUMMY);
             // Pass decompiled code for additional API detection via regex parsing
-            String decompiledCode = node != null ? node.getRawContent() : null;
+            String decompiledCode = node != null ? node.getDecompiledCode() : null;
             features = extractor.extractFeatures(function, decompiledCode);
 
             // Cache the features if we have a node
@@ -1560,6 +1571,14 @@ public class SemanticQueryTools {
 
             String oldName = node.getName();
             boolean wasUpdated = ensureNodeNameFresh(function, node);
+            if (wasUpdated) {
+                try {
+                    analysisDB.rebuildFts();
+                    analysisDB.invalidateKnowledgeGraphCache(currentProgram.getExecutableSHA256());
+                } catch (Exception e) {
+                    Msg.warn(this, "Name refresh completed but cache/index refresh failed: " + e.getMessage());
+                }
+            }
 
             return MCPToolResult.success(buildNameRefreshOutput(
                 function.getName(), address, oldName, wasUpdated));
@@ -1567,6 +1586,14 @@ public class SemanticQueryTools {
 
         // Batch refresh all functions in binary
         int updated = refreshAllNames();
+        try {
+            analysisDB.rebuildFts();
+            if (currentProgram != null) {
+                analysisDB.invalidateKnowledgeGraphCache(currentProgram.getExecutableSHA256());
+            }
+        } catch (Exception e) {
+            Msg.warn(this, "Name refresh completed but cache/index refresh failed: " + e.getMessage());
+        }
         return MCPToolResult.success(buildBatchNameRefreshOutput(updated));
     }
 
@@ -1932,10 +1959,17 @@ public class SemanticQueryTools {
                 ". Valid types: SIMILAR_PURPOSE, RELATED_TO, DEPENDS_ON, IMPLEMENTS");
         }
 
-        // Validate that this is a semantic edge type (not structural)
-        if (!isSemanticEdgeType(edgeType)) {
-            return MCPToolResult.error("Edge type " + edgeTypeStr + " is not a semantic edge type. " +
-                "Use: SIMILAR_PURPOSE, RELATED_TO, DEPENDS_ON, IMPLEMENTS");
+        // Validate that this is not a structural edge type
+        if (!isLLMCreatableEdgeType(edgeType)) {
+            StringBuilder validTypes = new StringBuilder();
+            for (ghidrassist.graphrag.nodes.EdgeType et : ghidrassist.graphrag.nodes.EdgeType.values()) {
+                if (!et.isStructural()) {
+                    if (validTypes.length() > 0) validTypes.append(", ");
+                    validTypes.append(et.name());
+                }
+            }
+            return MCPToolResult.error("Edge type " + edgeTypeStr + " is a structural edge type and cannot be created by the LLM. " +
+                "Allowed types: " + validTypes.toString());
         }
 
         // Look up source function
@@ -1999,13 +2033,10 @@ public class SemanticQueryTools {
     }
 
     /**
-     * Check if an edge type is a semantic (LLM-creatable) edge type.
+     * Check if an edge type can be created by the LLM (any non-structural type).
      */
-    private boolean isSemanticEdgeType(ghidrassist.graphrag.nodes.EdgeType edgeType) {
-        return edgeType == ghidrassist.graphrag.nodes.EdgeType.SIMILAR_PURPOSE ||
-               edgeType == ghidrassist.graphrag.nodes.EdgeType.RELATED_TO ||
-               edgeType == ghidrassist.graphrag.nodes.EdgeType.DEPENDS_ON ||
-               edgeType == ghidrassist.graphrag.nodes.EdgeType.IMPLEMENTS;
+    private boolean isLLMCreatableEdgeType(ghidrassist.graphrag.nodes.EdgeType edgeType) {
+        return !edgeType.isStructural();
     }
 
     /**

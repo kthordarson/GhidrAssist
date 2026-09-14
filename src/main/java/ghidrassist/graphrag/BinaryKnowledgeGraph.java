@@ -382,14 +382,18 @@ public class BinaryKnowledgeGraph {
     private void upsertNodeInternal(KnowledgeNode node, boolean isRetry) {
         // Step 1: Try INSERT OR IGNORE for new nodes (preserves edge references)
         String insertSql = "INSERT OR IGNORE INTO graph_nodes "
-                + "(id, type, address, binary_id, name, raw_content, llm_summary, confidence, "
+                + "(id, type, address, binary_id, name, signature, decompiled_code, disassembly, raw_content, llm_summary, confidence, "
                 + "embedding, security_flags, network_apis, file_io_apis, ip_addresses, urls, "
-                + "file_paths, domains, registry_keys, risk_level, activity_profile, analysis_depth, "
+                + "file_paths, domains, registry_keys, category, risk_level, activity_profile, analysis_depth, "
                 + "created_at, updated_at, is_stale, user_edited) "
-                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
         // Step 2: UPDATE existing nodes (for when INSERT was ignored)
         String updateSql = "UPDATE graph_nodes SET "
+                + "name = COALESCE(?, name), "
+                + "signature = COALESCE(?, signature), "
+                + "decompiled_code = COALESCE(?, decompiled_code), "
+                + "disassembly = COALESCE(?, disassembly), "
                 + "raw_content = COALESCE(?, raw_content), "
                 + "llm_summary = COALESCE(?, llm_summary), "
                 + "confidence = ?, "
@@ -402,6 +406,7 @@ public class BinaryKnowledgeGraph {
                 + "file_paths = COALESCE(?, file_paths), "
                 + "domains = COALESCE(?, domains), "
                 + "registry_keys = COALESCE(?, registry_keys), "
+                + "category = COALESCE(?, category), "
                 + "risk_level = COALESCE(?, risk_level), "
                 + "activity_profile = COALESCE(?, activity_profile), "
                 + "analysis_depth = ?, "
@@ -422,25 +427,29 @@ public class BinaryKnowledgeGraph {
                 }
                 insertStmt.setString(4, node.getBinaryId());
                 insertStmt.setString(5, node.getName());
-                insertStmt.setString(6, node.getRawContent());
-                insertStmt.setString(7, node.getLlmSummary());
-                insertStmt.setFloat(8, node.getConfidence());
-                insertStmt.setBytes(9, node.serializeEmbedding());
-                insertStmt.setString(10, node.serializeSecurityFlags());
-                insertStmt.setString(11, node.serializeNetworkAPIs());
-                insertStmt.setString(12, node.serializeFileIOAPIs());
-                insertStmt.setString(13, node.serializeIPAddresses());
-                insertStmt.setString(14, node.serializeURLs());
-                insertStmt.setString(15, node.serializeFilePaths());
-                insertStmt.setString(16, node.serializeDomains());
-                insertStmt.setString(17, node.serializeRegistryKeys());
-                insertStmt.setString(18, node.getRiskLevel());
-                insertStmt.setString(19, node.getActivityProfile());
-                insertStmt.setInt(20, node.getAnalysisDepth());
-                insertStmt.setLong(21, node.getCreatedAt().toEpochMilli());
-                insertStmt.setLong(22, node.getUpdatedAt().toEpochMilli());
-                insertStmt.setInt(23, node.isStale() ? 1 : 0);
-                insertStmt.setInt(24, node.isUserEdited() ? 1 : 0);
+                insertStmt.setString(6, node.getSignature());
+                insertStmt.setString(7, node.getDecompiledCode());
+                insertStmt.setString(8, node.getDisassembly());
+                insertStmt.setString(9, node.getRawContent());
+                insertStmt.setString(10, node.getLlmSummary());
+                insertStmt.setFloat(11, node.getConfidence());
+                insertStmt.setBytes(12, node.serializeEmbedding());
+                insertStmt.setString(13, node.serializeSecurityFlags());
+                insertStmt.setString(14, node.serializeNetworkAPIs());
+                insertStmt.setString(15, node.serializeFileIOAPIs());
+                insertStmt.setString(16, node.serializeIPAddresses());
+                insertStmt.setString(17, node.serializeURLs());
+                insertStmt.setString(18, node.serializeFilePaths());
+                insertStmt.setString(19, node.serializeDomains());
+                insertStmt.setString(20, node.serializeRegistryKeys());
+                insertStmt.setString(21, node.getCategory());
+                insertStmt.setString(22, node.getRiskLevel());
+                insertStmt.setString(23, node.getActivityProfile());
+                insertStmt.setInt(24, node.getAnalysisDepth());
+                insertStmt.setLong(25, node.getCreatedAt().toEpochMilli());
+                insertStmt.setLong(26, node.getUpdatedAt().toEpochMilli());
+                insertStmt.setInt(27, node.isStale() ? 1 : 0);
+                insertStmt.setInt(28, node.isUserEdited() ? 1 : 0);
 
                 insertStmt.executeUpdate();
             }
@@ -448,25 +457,30 @@ public class BinaryKnowledgeGraph {
             // Step 2: UPDATE existing node data (handles case where INSERT was ignored)
             // This ensures summaries and other updated fields get saved
             try (PreparedStatement updateStmt = connection.prepareStatement(updateSql)) {
-                updateStmt.setString(1, node.getRawContent());
-                updateStmt.setString(2, node.getLlmSummary());
-                updateStmt.setFloat(3, node.getConfidence());
-                updateStmt.setBytes(4, node.serializeEmbedding());
-                updateStmt.setString(5, node.serializeSecurityFlags());
-                updateStmt.setString(6, node.serializeNetworkAPIs());
-                updateStmt.setString(7, node.serializeFileIOAPIs());
-                updateStmt.setString(8, node.serializeIPAddresses());
-                updateStmt.setString(9, node.serializeURLs());
-                updateStmt.setString(10, node.serializeFilePaths());
-                updateStmt.setString(11, node.serializeDomains());
-                updateStmt.setString(12, node.serializeRegistryKeys());
-                updateStmt.setString(13, node.getRiskLevel());
-                updateStmt.setString(14, node.getActivityProfile());
-                updateStmt.setInt(15, node.getAnalysisDepth());
-                updateStmt.setLong(16, node.getUpdatedAt().toEpochMilli());
-                updateStmt.setInt(17, node.isStale() ? 1 : 0);
-                updateStmt.setInt(18, node.isUserEdited() ? 1 : 0);
-                updateStmt.setString(19, node.getId());
+                updateStmt.setString(1, node.getName());
+                updateStmt.setString(2, node.getSignature());
+                updateStmt.setString(3, node.getDecompiledCode());
+                updateStmt.setString(4, node.getDisassembly());
+                updateStmt.setString(5, node.getRawContent());
+                updateStmt.setString(6, node.getLlmSummary());
+                updateStmt.setFloat(7, node.getConfidence());
+                updateStmt.setBytes(8, node.serializeEmbedding());
+                updateStmt.setString(9, node.serializeSecurityFlags());
+                updateStmt.setString(10, node.serializeNetworkAPIs());
+                updateStmt.setString(11, node.serializeFileIOAPIs());
+                updateStmt.setString(12, node.serializeIPAddresses());
+                updateStmt.setString(13, node.serializeURLs());
+                updateStmt.setString(14, node.serializeFilePaths());
+                updateStmt.setString(15, node.serializeDomains());
+                updateStmt.setString(16, node.serializeRegistryKeys());
+                updateStmt.setString(17, node.getCategory());
+                updateStmt.setString(18, node.getRiskLevel());
+                updateStmt.setString(19, node.getActivityProfile());
+                updateStmt.setInt(20, node.getAnalysisDepth());
+                updateStmt.setLong(21, node.getUpdatedAt().toEpochMilli());
+                updateStmt.setInt(22, node.isStale() ? 1 : 0);
+                updateStmt.setInt(23, node.isUserEdited() ? 1 : 0);
+                updateStmt.setString(24, node.getId());
 
                 updateStmt.executeUpdate();
             }
@@ -695,11 +709,11 @@ public class BinaryKnowledgeGraph {
         // This preserves node IDs that edges may reference.
         // Duplicates are already filtered by getPendingNodeByAddress() check.
         String sql = "INSERT OR IGNORE INTO graph_nodes "
-                + "(id, type, address, binary_id, name, raw_content, llm_summary, confidence, "
+                + "(id, type, address, binary_id, name, signature, decompiled_code, disassembly, raw_content, llm_summary, confidence, "
                 + "embedding, security_flags, network_apis, file_io_apis, ip_addresses, urls, "
-                + "file_paths, domains, registry_keys, risk_level, activity_profile, analysis_depth, "
+                + "file_paths, domains, registry_keys, category, risk_level, activity_profile, analysis_depth, "
                 + "created_at, updated_at, is_stale, user_edited) "
-                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
         synchronized (batchLock) {
             try {
@@ -717,25 +731,29 @@ public class BinaryKnowledgeGraph {
                         }
                         stmt.setString(4, node.getBinaryId());
                         stmt.setString(5, node.getName());
-                        stmt.setString(6, node.getRawContent());
-                        stmt.setString(7, node.getLlmSummary());
-                        stmt.setFloat(8, node.getConfidence());
-                        stmt.setBytes(9, node.serializeEmbedding());
-                        stmt.setString(10, node.serializeSecurityFlags());
-                        stmt.setString(11, node.serializeNetworkAPIs());
-                        stmt.setString(12, node.serializeFileIOAPIs());
-                        stmt.setString(13, node.serializeIPAddresses());
-                        stmt.setString(14, node.serializeURLs());
-                        stmt.setString(15, node.serializeFilePaths());
-                        stmt.setString(16, node.serializeDomains());
-                        stmt.setString(17, node.serializeRegistryKeys());
-                        stmt.setString(18, node.getRiskLevel());
-                        stmt.setString(19, node.getActivityProfile());
-                        stmt.setInt(20, node.getAnalysisDepth());
-                        stmt.setLong(21, node.getCreatedAt().toEpochMilli());
-                        stmt.setLong(22, node.getUpdatedAt().toEpochMilli());
-                        stmt.setInt(23, node.isStale() ? 1 : 0);
-                        stmt.setInt(24, node.isUserEdited() ? 1 : 0);
+                        stmt.setString(6, node.getSignature());
+                        stmt.setString(7, node.getDecompiledCode());
+                        stmt.setString(8, node.getDisassembly());
+                        stmt.setString(9, node.getRawContent());
+                        stmt.setString(10, node.getLlmSummary());
+                        stmt.setFloat(11, node.getConfidence());
+                        stmt.setBytes(12, node.serializeEmbedding());
+                        stmt.setString(13, node.serializeSecurityFlags());
+                        stmt.setString(14, node.serializeNetworkAPIs());
+                        stmt.setString(15, node.serializeFileIOAPIs());
+                        stmt.setString(16, node.serializeIPAddresses());
+                        stmt.setString(17, node.serializeURLs());
+                        stmt.setString(18, node.serializeFilePaths());
+                        stmt.setString(19, node.serializeDomains());
+                        stmt.setString(20, node.serializeRegistryKeys());
+                        stmt.setString(21, node.getCategory());
+                        stmt.setString(22, node.getRiskLevel());
+                        stmt.setString(23, node.getActivityProfile());
+                        stmt.setInt(24, node.getAnalysisDepth());
+                        stmt.setLong(25, node.getCreatedAt().toEpochMilli());
+                        stmt.setLong(26, node.getUpdatedAt().toEpochMilli());
+                        stmt.setInt(27, node.isStale() ? 1 : 0);
+                        stmt.setInt(28, node.isUserEdited() ? 1 : 0);
                         stmt.addBatch();
 
                         // Add to in-memory graph
@@ -1189,7 +1207,7 @@ public class BinaryKnowledgeGraph {
 
         List<String> callerIds = new ArrayList<>();
         for (LabeledEdge edge : inEdges) {
-            if (edge.getType() == EdgeType.CALLS) {
+            if (edge.getType() == EdgeType.CALLS || edge.getType() == EdgeType.INFERRED_CALLS) {
                 callerIds.add(memoryGraph.getEdgeSource(edge));
             }
         }
@@ -1217,7 +1235,7 @@ public class BinaryKnowledgeGraph {
 
         List<String> calleeIds = new ArrayList<>();
         for (LabeledEdge edge : outEdges) {
-            if (edge.getType() == EdgeType.CALLS) {
+            if (edge.getType() == EdgeType.CALLS || edge.getType() == EdgeType.INFERRED_CALLS) {
                 calleeIds.add(memoryGraph.getEdgeTarget(edge));
             }
         }
@@ -1312,18 +1330,23 @@ public class BinaryKnowledgeGraph {
      */
     private List<KnowledgeNode> ftsSearchInternal(String query, int limit, boolean isRetry) {
         List<KnowledgeNode> results = new ArrayList<>();
-        String sql = "SELECT id FROM node_fts WHERE node_fts MATCH ? LIMIT ?";
+        // Join with graph_nodes to filter by binary_id BEFORE applying LIMIT
+        String sql = "SELECT node_fts.id FROM node_fts, graph_nodes "
+                   + "WHERE node_fts MATCH ? "
+                   + "AND graph_nodes.rowid = node_fts.rowid "
+                   + "AND graph_nodes.binary_id = ? "
+                   + "LIMIT ?";
 
         try (PreparedStatement stmt = connection.prepareStatement(sql)) {
-            // Escape special FTS5 characters and prepare query
             String ftsQuery = escapeFtsQuery(query);
             stmt.setString(1, ftsQuery);
-            stmt.setInt(2, limit);
+            stmt.setString(2, binaryId);
+            stmt.setInt(3, limit);
 
             ResultSet rs = stmt.executeQuery();
             while (rs.next()) {
                 KnowledgeNode node = getNode(rs.getString("id"));
-                if (node != null && binaryId.equals(node.getBinaryId())) {
+                if (node != null) {
                     results.add(node);
                 }
             }
@@ -1351,7 +1374,14 @@ public class BinaryKnowledgeGraph {
      * Results are ordered by address for predictable processing order.
      */
     public List<KnowledgeNode> getStaleNodes(int limit) {
+        return getStaleNodes(limit, SemanticAnalysisOptions.defaults());
+    }
+
+    public List<KnowledgeNode> getStaleNodes(int limit, SemanticAnalysisOptions options) {
         List<KnowledgeNode> nodes = new ArrayList<>();
+        SemanticAnalysisOptions effectiveOptions = options != null ? options : SemanticAnalysisOptions.defaults();
+        int effectiveLimit = limit > 0 ? limit : Integer.MAX_VALUE;
+        int queryLimit = effectiveOptions.isDefaultScope() ? effectiveLimit : Integer.MAX_VALUE;
         // Include nodes that are stale OR have no summary (null, empty, or whitespace-only)
         // Order by address for predictable sequential processing
         String sql = "SELECT * FROM graph_nodes WHERE binary_id = ? " +
@@ -1360,10 +1390,16 @@ public class BinaryKnowledgeGraph {
 
         try (PreparedStatement stmt = connection.prepareStatement(sql)) {
             stmt.setString(1, binaryId);
-            stmt.setInt(2, limit);
+            stmt.setInt(2, queryLimit);
             ResultSet rs = stmt.executeQuery();
             while (rs.next()) {
-                nodes.add(resultSetToNode(rs));
+                KnowledgeNode node = resultSetToNode(rs);
+                if (effectiveOptions.matches(node)) {
+                    nodes.add(node);
+                    if (nodes.size() >= effectiveLimit) {
+                        break;
+                    }
+                }
             }
         } catch (SQLException e) {
             Msg.error(this, "Failed to get stale nodes: " + e.getMessage(), e);
@@ -1377,6 +1413,9 @@ public class BinaryKnowledgeGraph {
 
     /**
      * Mark all nodes in the graph as stale.
+     * Used at the start of incremental reindex to identify unchanged nodes.
+     *
+     * @return Number of nodes marked stale
      */
     public int markAllStale() {
         String sql = "UPDATE graph_nodes SET is_stale = 1 WHERE binary_id = ?";
@@ -1390,12 +1429,51 @@ public class BinaryKnowledgeGraph {
     }
 
     /**
+     * Get count of nodes with LLM summaries (non-stale with summary).
+     * Useful for tracking how many summaries were preserved during incremental reindex.
+     *
+     * @return Count of nodes with preserved summaries
+     */
+    public int getPreservedSummaryCount() {
+        String sql = "SELECT COUNT(*) FROM graph_nodes WHERE binary_id = ? " +
+                     "AND is_stale = 0 AND llm_summary IS NOT NULL AND TRIM(llm_summary) != ''";
+        try (PreparedStatement stmt = connection.prepareStatement(sql)) {
+            stmt.setString(1, binaryId);
+            ResultSet rs = stmt.executeQuery();
+            if (rs.next()) {
+                return rs.getInt(1);
+            }
+        } catch (SQLException e) {
+            Msg.error(this, "Failed to get preserved summary count: " + e.getMessage(), e);
+        }
+        return 0;
+    }
+
+    /**
+     * Get count of nodes that are stale (need re-summarization).
+     *
+     * @return Count of stale nodes
+     */
+    public int getStaleNodeCount() {
+        String sql = "SELECT COUNT(*) FROM graph_nodes WHERE binary_id = ? AND is_stale = 1";
+        try (PreparedStatement stmt = connection.prepareStatement(sql)) {
+            stmt.setString(1, binaryId);
+            ResultSet rs = stmt.executeQuery();
+            if (rs.next()) {
+                return rs.getInt(1);
+            }
+        } catch (SQLException e) {
+            Msg.error(this, "Failed to get stale node count: " + e.getMessage(), e);
+        }
+        return 0;
+    }
+
+    /**
      * Delete all graph data for this binary.
-     * Clears: edges, nodes, communities, and FTS index entries.
+     * Clears: edges, nodes, and communities.
+     * FTS is synced separately via rebuildFts() after batch operations.
      */
     public void clearGraph() {
-        // Delete edges first - they reference nodes but don't have binary_id
-        // Use subquery to find edges connected to this binary's nodes
         String deleteEdges = "DELETE FROM graph_edges WHERE " +
                 "source_id IN (SELECT id FROM graph_nodes WHERE binary_id = ?) OR " +
                 "target_id IN (SELECT id FROM graph_nodes WHERE binary_id = ?)";
@@ -1406,7 +1484,6 @@ public class BinaryKnowledgeGraph {
              PreparedStatement stmtNodes = connection.prepareStatement(deleteNodes);
              PreparedStatement stmtCommunities = connection.prepareStatement(deleteCommunities)) {
 
-            // Order matters: edges first, then nodes (FTS trigger cleans up), then communities
             stmtEdges.setString(1, binaryId);
             stmtEdges.setString(2, binaryId);
             int edgesDeleted = stmtEdges.executeUpdate();
@@ -1417,7 +1494,6 @@ public class BinaryKnowledgeGraph {
             stmtCommunities.setString(1, binaryId);
             int communitiesDeleted = stmtCommunities.executeUpdate();
 
-            // Clear in-memory graph
             memoryGraph = new DefaultDirectedGraph<>(LabeledEdge.class);
             nodeCount = 0;
             edgeCount = 0;
@@ -1426,6 +1502,16 @@ public class BinaryKnowledgeGraph {
                     binaryId, edgesDeleted, nodesDeleted, communitiesDeleted));
         } catch (SQLException e) {
             Msg.error(this, "Failed to clear graph: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Rebuild the FTS index from current graph_nodes data.
+     * Call after batch operations to sync FTS with the base table.
+     */
+    public void rebuildFts() {
+        if (analysisDB != null) {
+            analysisDB.rebuildFts();
         }
     }
 
@@ -1768,6 +1854,21 @@ public class BinaryKnowledgeGraph {
         }
 
         node.setName(rs.getString("name"));
+        try {
+            node.setSignature(rs.getString("signature"));
+        } catch (SQLException e) {
+            // Column doesn't exist in older databases
+        }
+        try {
+            node.setDecompiledCode(rs.getString("decompiled_code"));
+        } catch (SQLException e) {
+            // Column doesn't exist in older databases
+        }
+        try {
+            node.setDisassembly(rs.getString("disassembly"));
+        } catch (SQLException e) {
+            // Column doesn't exist in older databases
+        }
         node.setRawContent(rs.getString("raw_content"));
         node.setLlmSummary(rs.getString("llm_summary"));
         node.setConfidence(rs.getFloat("confidence"));
@@ -1832,6 +1933,11 @@ public class BinaryKnowledgeGraph {
             // Column doesn't exist
         }
         try {
+            node.setCategory(rs.getString("category"));
+        } catch (SQLException e) {
+            // Column doesn't exist
+        }
+        try {
             node.setRiskLevel(rs.getString("risk_level"));
         } catch (SQLException e) {
             // Column doesn't exist
@@ -1846,22 +1952,10 @@ public class BinaryKnowledgeGraph {
     }
 
     private String escapeFtsQuery(String query) {
-        // FTS5 has many special characters and operators that can cause errors:
-        // - Column filter: column:term
-        // - Phrase: "phrase"
-        // - Prefix: term*
-        // - Boolean: AND, OR, NOT
-        // - Grouping: ( )
-        // - Required/excluded: +term, -term
-        // - NEAR operator
-        //
-        // The safest approach is to quote each term individually to make them literal.
-
         if (query == null || query.trim().isEmpty()) {
-            return "\"\""; // Empty query
+            return "\"\"";
         }
 
-        // Split into words and quote each one
         String[] words = query.trim().split("\\s+");
         StringBuilder sb = new StringBuilder();
 
@@ -1869,17 +1963,18 @@ public class BinaryKnowledgeGraph {
             String word = words[i];
             if (word.isEmpty()) continue;
 
-            // Escape internal quotes by doubling them
-            word = word.replace("\"", "\"\"");
+            // Skip FTS5 operator keywords so they don't become literal terms
+            if (word.equalsIgnoreCase("OR") || word.equalsIgnoreCase("AND") || word.equalsIgnoreCase("NOT")) {
+                continue;
+            }
 
-            // Remove characters that are problematic even inside quotes
+            word = word.replace("\"", "\"\"");
             word = word.replace("*", "");
 
             if (sb.length() > 0) {
-                sb.append(" ");
+                sb.append(" OR ");
             }
 
-            // Quote the word to treat it as a literal
             sb.append("\"").append(word).append("\"");
         }
 

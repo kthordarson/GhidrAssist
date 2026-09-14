@@ -67,15 +67,24 @@ public class ChatSessionManager {
      */
     public int createNewSession(String programHash) {
         synchronized (sessionLock) {
-            // Generate description based on session count
-            int nextNumber = sessionRepository.getNextSessionNumber(programHash);
-            String description = "Chat " + nextNumber;
+            return createCurrentSession(programHash, true);
+        }
+    }
 
+    /**
+     * Create a new chat session without making it current.
+     * Used for document chats that should appear in the sidebar
+     * without disrupting the active conversation.
+     * Thread-safe via synchronized block.
+     *
+     * @param programHash The program hash
+     * @param description Description for the new session
+     * @return The new session ID, or NO_SESSION on failure
+     */
+    public int createDetachedSession(String programHash, String description) {
+        synchronized (sessionLock) {
             int sessionId = sessionRepository.createSession(programHash, description);
-            if (sessionId != NO_SESSION) {
-                currentSessionId.set(sessionId);
-                messageStore.clear();
-            }
+            // Do NOT set currentSessionId or clear messageStore
             return sessionId;
         }
     }
@@ -95,17 +104,7 @@ public class ChatSessionManager {
                 return false;
             }
 
-            // Load messages from database
             List<PersistedChatMessage> messages = messageRepository.loadMessages(programHash, sessionId);
-
-            // If no per-message storage, try legacy migration
-            if (messages.isEmpty() && !messageRepository.hasMessages(programHash, sessionId)) {
-                String legacyConversation = sessionRepository.getLegacyConversation(sessionId);
-                if (legacyConversation != null && !legacyConversation.isEmpty()) {
-                    // Migration will be handled by LegacyMigrator
-                    // For now, just note that legacy data exists
-                }
-            }
 
             // Update state
             messageStore.setMessages(messages);
@@ -157,6 +156,16 @@ public class ChatSessionManager {
             }
             return deleted;
         }
+    }
+
+    /**
+     * Set the current session ID without loading messages from database.
+     * Used for ReAct sessions where message formatting is handled separately.
+     *
+     * @param sessionId The session ID to set as current
+     */
+    public void setCurrentSessionId(int sessionId) {
+        currentSessionId.set(sessionId);
     }
 
     /**
@@ -257,9 +266,23 @@ public class ChatSessionManager {
     public int ensureSession(String programHash) {
         synchronized (sessionLock) {
             if (currentSessionId.get() == NO_SESSION && !messageStore.isEmpty()) {
-                return createNewSession(programHash);
+                return createCurrentSession(programHash, false);
             }
             return currentSessionId.get();
         }
+    }
+
+    private int createCurrentSession(String programHash, boolean clearMessages) {
+        int nextNumber = sessionRepository.getNextSessionNumber(programHash);
+        String description = "Chat " + nextNumber;
+
+        int sessionId = sessionRepository.createSession(programHash, description);
+        if (sessionId != NO_SESSION) {
+            currentSessionId.set(sessionId);
+            if (clearMessages) {
+                messageStore.clear();
+            }
+        }
+        return sessionId;
     }
 }

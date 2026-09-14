@@ -1,26 +1,43 @@
 package ghidrassist.ui.tabs;
 
 import javax.swing.*;
+import javax.swing.event.TableModelEvent;
 import javax.swing.table.DefaultTableModel;
 import javax.swing.text.*;
+import javax.swing.text.html.HTML;
+import javax.swing.text.html.HTMLDocument;
+import javax.swing.text.html.HTMLEditorKit;
 import java.awt.*;
 import java.awt.datatransfer.Clipboard;
 import java.awt.datatransfer.StringSelection;
+import java.awt.event.ActionEvent;
 import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.io.StringWriter;
 import java.text.SimpleDateFormat;
 import java.util.TimeZone;
 import java.util.Date;
 import ghidra.util.Msg;
 import ghidrassist.core.MarkdownHelper;
 import ghidrassist.core.TabController;
+import ghidrassist.core.streaming.RenderUpdate;
+import ghidrassist.core.streaming.StreamingScrollManager;
 import ghidrassist.mcp2.server.MCPServerRegistry;
 import ghidrassist.AnalysisDB;
+import ghidrassist.services.QueryService;
 
 public class QueryTab extends JPanel {
     private static final long serialVersionUID = 1L;
+    private static final String[] CHAT_TYPE_LABELS = {
+        "Chat",
+        "General",
+        "Malware Report",
+        "Vulnerability Analysis",
+        "API Documentation",
+        "Notes"
+    };
     private final TabController controller;
     private final MarkdownHelper markdownHelper;
     private JTextPane responseTextPane;  // Changed from JEditorPane for better performance
@@ -29,11 +46,24 @@ public class QueryTab extends JPanel {
     private JCheckBox useRAGCheckBox;
     private JCheckBox useMCPCheckBox;
     private JCheckBox useAgenticCheckBox;
+    private JCheckBox acceptAllToolsCheckBox;
     private JButton submitButton;
     private JButton newButton;
     private JButton deleteButton;
     private JTable chatHistoryTable;
     private DefaultTableModel chatHistoryModel;
+    private JLabel contextStatusLabel;
+    private JPanel approvalPanel;
+    private JPanel planPanel;
+    private JTextArea planTextArea;
+    private JButton approvePlanButton;
+    private JButton cancelPlanButton;
+    private JLabel approvalSummaryLabel;
+    private JTextArea approvalArgsArea;
+    private JButton approveOnceButton;
+    private JButton approveSessionButton;
+    private JButton denyApprovalButton;
+    private String currentPendingApprovalRequestId;
     private SimpleDateFormat dateFormat;
 
     // Edit mode components
@@ -43,11 +73,26 @@ public class QueryTab extends JPanel {
     private CardLayout contentLayout;
     private boolean isEditMode = false;
     private String currentMarkdownSource = "";
-    private static final String QUERY_HINT_TEXT = 
+    private static final String QUERY_HINT_TEXT =
         "#line to include the current disassembly line.\n" +
         "#func to include current function disassembly.\n" +
         "#addr to include the current hex address.\n" +
         "#range(start, end) to include the view data in a given range.";
+
+    // Use shared theme-aware CSS from MarkdownHelper for consistency
+    private static String getStreamingCSS() {
+        return MarkdownHelper.getThemeAwareCSS();
+    }
+
+    // Streaming state fields
+    private StringBuilder accumulatedCommittedHtml = new StringBuilder();
+    private String lastPendingHtml = "<span></span>";
+    private boolean documentCorrupted = false;
+    private String currentStreamingPrefixHtml = "";
+    private String currentStreamingBodyPrefixHtml = "";
+    private String currentStreamingBodySuffixHtml = "";
+    private StreamingScrollManager scrollManager;
+    private JScrollPane responseScrollPane;
 
     public QueryTab(TabController controller) {
         super(new BorderLayout());
@@ -85,6 +130,11 @@ public class QueryTab extends JPanel {
         useAgenticCheckBox.setEnabled(false); // Enabled only when MCP is available
         useAgenticCheckBox.setToolTipText("Enable autonomous ReAct-style analysis with systematic tool use");
 
+        acceptAllToolsCheckBox = new JCheckBox("Accept All Tools");
+        acceptAllToolsCheckBox.setSelected(false);
+        acceptAllToolsCheckBox.setEnabled(true);
+        acceptAllToolsCheckBox.setToolTipText("Allow all tool calls for the active chat session without prompting");
+
         // responseTextPane already initialized in constructor
 
         queryTextArea = new JTextArea();
@@ -98,6 +148,47 @@ public class QueryTab extends JPanel {
         newButton = new JButton("New");
         deleteButton = new JButton("Delete");
         editSaveButton = new JButton("Edit");
+        contextStatusLabel = new JLabel("Model: No provider / No model | No active context window data");
+        contextStatusLabel.setFont(new Font("Monospaced", Font.PLAIN, 11));
+        approvalPanel = new JPanel(new BorderLayout(6, 6));
+        planPanel = new JPanel(new BorderLayout(6, 6));
+        planTextArea = new JTextArea(5, 40);
+        planTextArea.setEditable(false);
+        planTextArea.setLineWrap(true);
+        planTextArea.setWrapStyleWord(true);
+        planTextArea.setFont(new Font("Monospaced", Font.PLAIN, 11));
+        approvePlanButton = new JButton("Approve Plan");
+        cancelPlanButton = new JButton("Cancel");
+        approvalSummaryLabel = new JLabel(" ");
+        approvalSummaryLabel.setFont(new Font("SansSerif", Font.PLAIN, 11));
+        approvalArgsArea = new JTextArea(2, 40);
+        approvalArgsArea.setEditable(false);
+        approvalArgsArea.setLineWrap(true);
+        approvalArgsArea.setWrapStyleWord(true);
+        approvalArgsArea.setFont(new Font("Monospaced", Font.PLAIN, 11));
+        approveOnceButton = new JButton("Allow Once");
+        approveSessionButton = new JButton("Allow for Session");
+        denyApprovalButton = new JButton("Deny");
+        Font compactButtonFont = new Font("SansSerif", Font.PLAIN, 11);
+        Insets compactButtonInsets = new Insets(4, 8, 4, 8);
+        approveOnceButton.setFont(compactButtonFont);
+        approveSessionButton.setFont(compactButtonFont);
+        denyApprovalButton.setFont(compactButtonFont);
+        approveOnceButton.setMargin(compactButtonInsets);
+        approveSessionButton.setMargin(compactButtonInsets);
+        denyApprovalButton.setMargin(compactButtonInsets);
+        approvalPanel.setBorder(BorderFactory.createCompoundBorder(
+            BorderFactory.createLineBorder(new Color(180, 60, 60), 1),
+            BorderFactory.createEmptyBorder(4, 6, 6, 6)
+        ));
+        planPanel.setBorder(BorderFactory.createCompoundBorder(
+            BorderFactory.createLineBorder(new Color(70, 130, 190), 1),
+            BorderFactory.createEmptyBorder(4, 6, 6, 6)
+        ));
+        planTextArea.setBorder(BorderFactory.createEmptyBorder(4, 4, 4, 4));
+        approvalArgsArea.setBorder(BorderFactory.createEmptyBorder(4, 4, 4, 4));
+        approvalPanel.setVisible(false);
+        planPanel.setVisible(false);
 
         // Initialize markdown edit area for edit mode
         markdownEditArea = new JTextArea();
@@ -110,11 +201,11 @@ public class QueryTab extends JPanel {
         contentPanel = new JPanel(contentLayout);
 
         // Initialize chat history table
-        chatHistoryModel = new DefaultTableModel(new Object[]{"Description", "Date"}, 0) {
+        chatHistoryModel = new DefaultTableModel(new Object[]{"Description", "Date", "Type"}, 0) {
             private static final long serialVersionUID = 1L;
             @Override
             public boolean isCellEditable(int row, int column) {
-                return column == 0; // Only description column is editable
+                return column == 0 || column == 2;
             }
         };
         
@@ -122,10 +213,13 @@ public class QueryTab extends JPanel {
         chatHistoryTable.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
         chatHistoryTable.setRowHeight(20);
         chatHistoryTable.setTableHeader(null); // Completely remove header row
+        chatHistoryTable.getColumnModel().getColumn(2).setCellEditor(
+                new DefaultCellEditor(new JComboBox<>(CHAT_TYPE_LABELS)));
         
         // Set column widths
-        chatHistoryTable.getColumnModel().getColumn(0).setPreferredWidth(150); // Description
-        chatHistoryTable.getColumnModel().getColumn(1).setPreferredWidth(150); // Date
+        chatHistoryTable.getColumnModel().getColumn(0).setPreferredWidth(180); // Description
+        chatHistoryTable.getColumnModel().getColumn(1).setPreferredWidth(130); // Date
+        chatHistoryTable.getColumnModel().getColumn(2).setPreferredWidth(160); // Type
     }
 
     private void layoutComponents() {
@@ -136,16 +230,43 @@ public class QueryTab extends JPanel {
         checkboxPanel.add(useRAGCheckBox);
         checkboxPanel.add(useMCPCheckBox);
         checkboxPanel.add(useAgenticCheckBox);
+        checkboxPanel.add(acceptAllToolsCheckBox);
         topPanel.add(checkboxPanel, BorderLayout.CENTER);
 
         JPanel editPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT));
         editPanel.add(editSaveButton);
         topPanel.add(editPanel, BorderLayout.EAST);
 
+        JPanel statusPanel = new JPanel(new BorderLayout(0, 6));
+        statusPanel.add(contextStatusLabel, BorderLayout.WEST);
+        topPanel.add(statusPanel, BorderLayout.SOUTH);
+
+        JPanel approvalButtonPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 4));
+        approvalButtonPanel.add(approveOnceButton);
+        approvalButtonPanel.add(approveSessionButton);
+        approvalButtonPanel.add(denyApprovalButton);
+        JPanel planButtonPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 4));
+        planButtonPanel.add(approvePlanButton);
+        planButtonPanel.add(cancelPlanButton);
+        planPanel.add(new JLabel("Review the proposed investigation plan. Refine in the query box, or approve to run."),
+            BorderLayout.NORTH);
+        JScrollPane planScrollPane = new JScrollPane(planTextArea);
+        planScrollPane.setBorder(BorderFactory.createEmptyBorder());
+        planPanel.add(planScrollPane, BorderLayout.CENTER);
+        planPanel.add(planButtonPanel, BorderLayout.SOUTH);
+        approvalPanel.add(approvalSummaryLabel, BorderLayout.NORTH);
+        JScrollPane approvalArgsScrollPane = new JScrollPane(approvalArgsArea);
+        approvalArgsScrollPane.setBorder(BorderFactory.createEmptyBorder());
+        approvalPanel.add(approvalArgsScrollPane, BorderLayout.CENTER);
+        approvalPanel.add(approvalButtonPanel, BorderLayout.SOUTH);
+
         add(topPanel, BorderLayout.NORTH);
 
         // Setup content panel with CardLayout (view mode + edit mode)
-        JScrollPane responseScrollPane = new JScrollPane(responseTextPane);
+        responseScrollPane = new JScrollPane(responseTextPane);
+        responseScrollPane.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_ALWAYS);
+        responseScrollPane.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
+        scrollManager = new StreamingScrollManager(responseScrollPane);
         JScrollPane editScrollPane = new JScrollPane(markdownEditArea);
         contentPanel.add(responseScrollPane, "view");
         contentPanel.add(editScrollPane, "edit");
@@ -162,9 +283,17 @@ public class QueryTab extends JPanel {
         bottomPanel.add(chatHistoryScrollPane, BorderLayout.NORTH);
         bottomPanel.add(queryScrollPane, BorderLayout.CENTER);
 
-        // Create main split pane between response and (chat history + query)
+        JPanel responseAreaPanel = new JPanel(new BorderLayout());
+        responseAreaPanel.add(contentPanel, BorderLayout.CENTER);
+        JPanel inlinePanel = new JPanel();
+        inlinePanel.setLayout(new BoxLayout(inlinePanel, BoxLayout.Y_AXIS));
+        inlinePanel.add(planPanel);
+        inlinePanel.add(approvalPanel);
+        responseAreaPanel.add(inlinePanel, BorderLayout.SOUTH);
+
+        // Create main split pane between response/approval and (chat history + query)
         JSplitPane mainSplitPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT,
-            contentPanel, bottomPanel);
+            responseAreaPanel, bottomPanel);
         mainSplitPane.setResizeWeight(0.7); // Give more space to response area
 
         // Create inner split pane for chat history and query area
@@ -205,7 +334,10 @@ public class QueryTab extends JPanel {
             if (isEditMode) {
                 // Save mode - capture content and notify controller
                 currentMarkdownSource = markdownEditArea.getText();
-                controller.handleChatEditSave(currentMarkdownSource);
+                boolean saved = controller.handleChatEditSave(currentMarkdownSource);
+                if (!saved) {
+                    return;
+                }
 
                 // Switch to view mode
                 contentLayout.show(contentPanel, "view");
@@ -213,7 +345,10 @@ public class QueryTab extends JPanel {
                 isEditMode = false;
             } else {
                 // Edit mode - notify controller to prepare content
-                controller.handleChatEditStart();
+                boolean success = controller.handleChatEditStart();
+                if (!success) {
+                    return; // Don't enter edit mode if preparation failed
+                }
 
                 // Switch to edit mode
                 contentLayout.show(contentPanel, "edit");
@@ -221,7 +356,32 @@ public class QueryTab extends JPanel {
                 isEditMode = true;
             }
         });
-        
+
+        approveOnceButton.addActionListener(e -> controller.handleApprovalDecision(
+            currentPendingApprovalRequestId, "allow_once"));
+        approveSessionButton.addActionListener(e -> controller.handleApprovalDecision(
+            currentPendingApprovalRequestId, "allow_session"));
+        denyApprovalButton.addActionListener(e -> controller.handleApprovalDecision(
+            currentPendingApprovalRequestId, "deny"));
+        approvePlanButton.addActionListener(e -> controller.handleAgentPlanApproved());
+        cancelPlanButton.addActionListener(e -> controller.handleAgentPlanCancelled());
+        acceptAllToolsCheckBox.addActionListener(e ->
+            controller.handleAcceptAllToolsChanged(acceptAllToolsCheckBox.isSelected()));
+
+        // ESC key discards edits and returns to view mode
+        markdownEditArea.getInputMap(JComponent.WHEN_FOCUSED)
+            .put(KeyStroke.getKeyStroke("ESCAPE"), "cancelEdit");
+        markdownEditArea.getActionMap().put("cancelEdit", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent ae) {
+                if (isEditMode) {
+                    contentLayout.show(contentPanel, "view");
+                    editSaveButton.setText("Edit");
+                    isEditMode = false;
+                }
+            }
+        });
+
         // Chat history table selection listener
         chatHistoryTable.getSelectionModel().addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting()) {
@@ -248,11 +408,18 @@ public class QueryTab extends JPanel {
         
         // Auto-save when focus changes from description field
         chatHistoryModel.addTableModelListener(e -> {
-            if (e.getColumn() == 0) { // Description column changed
-                int row = e.getFirstRow();
-                if (row >= 0) {
+            if (e.getType() != TableModelEvent.UPDATE) {
+                return;
+            }
+
+            int row = e.getFirstRow();
+            if (row >= 0) {
+                if (e.getColumn() == 0) {
                     String newDescription = (String) chatHistoryModel.getValueAt(row, 0);
                     controller.handleChatDescriptionUpdate(row, newDescription);
+                } else if (e.getColumn() == 2) {
+                    String newType = (String) chatHistoryModel.getValueAt(row, 2);
+                    controller.handleChatTypeUpdate(row, newType);
                 }
             }
         });
@@ -285,61 +452,279 @@ public class QueryTab extends JPanel {
     /**
      * Set response text - switches to HTML mode and renders full content.
      * PERFORMANCE: This is used at completion for full markdown rendering.
+     * Preserves scroll position if user has scrolled up from bottom.
      */
     public void setResponseText(String htmlText) {
-        SwingUtilities.invokeLater(() -> {
+        Runnable updateUi = () -> {
             try {
+                // Capture scroll state BEFORE any modifications
+                boolean wasAtBottom = scrollManager.isAtBottom();
+                int savedScrollValue = scrollManager.getScrollPane().getVerticalScrollBar().getValue();
+
                 // Switch to HTML mode for final markdown rendering
                 responseTextPane.setContentType("text/html");
+                responseTextPane.setEditorKit(new HTMLEditorKit());
                 responseTextPane.setText(htmlText);
 
-                // Auto-scroll to end
+                // Restore scroll position - only auto-scroll if user was at bottom
                 SwingUtilities.invokeLater(() -> {
-                    responseTextPane.setCaretPosition(responseTextPane.getDocument().getLength());
+                    if (wasAtBottom) {
+                        scrollManager.scrollToBottom();
+                    } else {
+                        scrollManager.getScrollPane().getVerticalScrollBar().setValue(savedScrollValue);
+                    }
                 });
             } catch (Exception e) {
                 Msg.error(this, "Error setting response text", e);
             }
-        });
+        };
+
+        if (SwingUtilities.isEventDispatchThread()) {
+            updateUi.run();
+        } else {
+            SwingUtilities.invokeLater(updateUi);
+        }
     }
 
     /**
-     * Append text incrementally without full document replacement.
-     * PERFORMANCE: This is the key optimization - true incremental append in plain text mode.
+     * Initialize the response pane for streaming with a two-div DOM structure.
+     * Optionally includes conversation history as a prefix.
+     *
+     * @param prefixHtml Pre-rendered HTML for conversation history (may be empty)
      */
-    public void appendStreamingText(String textDelta) {
-        if (textDelta == null || textDelta.isEmpty()) {
+    public void initializeForStreaming(String prefixHtml) {
+        initializeForStreaming(prefixHtml, "", "");
+    }
+
+    public void initializeForStreaming(String prefixHtml, String bodyPrefixHtml, String bodySuffixHtml) {
+        Runnable initializeUi = () -> {
+            // Capture scroll state BEFORE any modifications
+            boolean wasAtBottom = scrollManager.isAtBottom();
+            int savedScrollValue = scrollManager.getScrollPane().getVerticalScrollBar().getValue();
+
+            // Reset streaming state
+            accumulatedCommittedHtml.setLength(0);
+            lastPendingHtml = "<span></span>";
+            documentCorrupted = false;
+            currentStreamingPrefixHtml = (prefixHtml != null && !prefixHtml.isEmpty()) ? prefixHtml : "";
+            currentStreamingBodyPrefixHtml = bodyPrefixHtml != null ? bodyPrefixHtml : "";
+            currentStreamingBodySuffixHtml = bodySuffixHtml != null ? bodySuffixHtml : "";
+
+            // Switch to HTML mode
+            responseTextPane.setContentType("text/html");
+            HTMLEditorKit kit = new HTMLEditorKit();
+            responseTextPane.setEditorKit(kit);
+
+            // Build initial HTML with two-div structure
+            String initialHtml = String.format(
+                "<html><head><style>%s</style></head><body>%s%s" +
+                "<div id=\"committed\"></div>" +
+                "<div id=\"pending\"><span></span></div>" +
+                "%s</body></html>",
+                getStreamingCSS(), currentStreamingPrefixHtml, currentStreamingBodyPrefixHtml,
+                currentStreamingBodySuffixHtml);
+
+            responseTextPane.setText(initialHtml);
+            responseDocument = responseTextPane.getStyledDocument();
+
+            // Restore scroll position
+            if (wasAtBottom) {
+                SwingUtilities.invokeLater(() -> scrollManager.scrollToBottom());
+            } else {
+                SwingUtilities.invokeLater(() ->
+                        scrollManager.getScrollPane().getVerticalScrollBar().setValue(savedScrollValue));
+            }
+        };
+
+        if (SwingUtilities.isEventDispatchThread()) {
+            initializeUi.run();
+        } else {
+            SwingUtilities.invokeLater(initializeUi);
+        }
+    }
+
+    public void updateStreamingPrefix(String prefixHtml) {
+        Runnable updateUi = () -> {
+            currentStreamingPrefixHtml = prefixHtml != null ? prefixHtml : "";
+            rebuildDocument();
+        };
+
+        if (SwingUtilities.isEventDispatchThread()) {
+            updateUi.run();
+        } else {
+            SwingUtilities.invokeLater(updateUi);
+        }
+    }
+
+    /**
+     * Apply a render update to the streaming display.
+     * Handles both incremental (append/replace) and full document replacement.
+     * Note: This method is called from EDT (via StreamingMarkdownRenderer's invokeLater).
+     *
+     * @param update The render update to apply
+     */
+    public void applyRenderUpdate(RenderUpdate update) {
+        if (update == null) {
             return;
         }
 
-        SwingUtilities.invokeLater(() -> {
-            try {
-                int endPos = responseDocument.getLength();
-                responseDocument.insertString(endPos, textDelta, null);
+        // Capture scroll state BEFORE any DOM modification
+        boolean wasAtBottom = scrollManager.isAtBottom();
+        int savedScrollValue = scrollManager.getScrollPane().getVerticalScrollBar().getValue();
 
-                // Auto-scroll to end
-                responseTextPane.setCaretPosition(responseDocument.getLength());
-            } catch (BadLocationException e) {
-                Msg.error(this, "Error appending streaming text", e);
+        // Apply the update
+        switch (update.getType()) {
+            case INCREMENTAL -> applyIncrementalUpdate(update);
+            case FULL_REPLACE -> applyFullReplaceUpdate(update);
+        }
+
+        // Restore scroll position or auto-scroll (matching reference implementation)
+        if (wasAtBottom) {
+            SwingUtilities.invokeLater(() -> scrollManager.scrollToBottom());
+        } else {
+            // Restore the user's scroll position exactly
+            SwingUtilities.invokeLater(() ->
+                    scrollManager.getScrollPane().getVerticalScrollBar().setValue(savedScrollValue));
+        }
+    }
+
+    private void applyIncrementalUpdate(RenderUpdate update) {
+        // Track content for fallback rebuilds
+        String committedHtml = update.getCommittedHtmlToAppend();
+        if (committedHtml != null && !committedHtml.isEmpty()) {
+            accumulatedCommittedHtml.append(committedHtml);
+        }
+        String pendingHtml = update.getPendingHtml();
+        if (pendingHtml != null) {
+            lastPendingHtml = pendingHtml;
+        }
+
+        // If document was previously corrupted, use full rebuild strategy
+        if (documentCorrupted) {
+            rebuildDocument();
+            return;
+        }
+
+        HTMLDocument doc = ensureHtmlDocument();
+        if (doc == null) {
+            documentCorrupted = true;
+            rebuildDocument();
+            return;
+        }
+
+        try {
+            // Append committed HTML
+            if (committedHtml != null && !committedHtml.isEmpty()) {
+                Element committedDiv = findElement(doc, "committed");
+                if (committedDiv != null) {
+                    doc.insertBeforeEnd(committedDiv, committedHtml);
+                }
             }
-        });
+
+            // Replace pending div atomically using setOuterHTML
+            // (avoids the BiDi corruption bug in setInnerHTML)
+            if (pendingHtml != null) {
+                Element pendingDiv = findElement(doc, "pending");
+                if (pendingDiv != null) {
+                    String wrappedPending = "<div id=\"pending\">" + pendingHtml + "</div>";
+                    doc.setOuterHTML(pendingDiv, wrappedPending);
+                }
+            }
+        } catch (Exception e) {
+            Msg.warn(this, "DOM update failed, switching to rebuild strategy: " + e.getMessage());
+            documentCorrupted = true;
+            rebuildDocument();
+        }
+    }
+
+    private void applyFullReplaceUpdate(RenderUpdate update) {
+        String fullHtml = update.getFullHtml();
+        if (fullHtml != null) {
+            String wrapped = "<html><head><style>" + getStreamingCSS() + "</style></head><body>" +
+                    currentStreamingPrefixHtml +
+                    currentStreamingBodyPrefixHtml +
+                    fullHtml + "</body></html>";
+            wrapped = wrapped.replace("</body></html>", currentStreamingBodySuffixHtml + "</body></html>");
+            responseTextPane.setContentType("text/html");
+            responseTextPane.setEditorKit(new HTMLEditorKit());
+            responseTextPane.setText(wrapped);
+            documentCorrupted = false;
+        }
+    }
+
+    private void rebuildDocument() {
+        String html = "<html><head><style>" + getStreamingCSS() + "</style></head><body>" +
+                currentStreamingPrefixHtml +
+                currentStreamingBodyPrefixHtml +
+                accumulatedCommittedHtml.toString() +
+                lastPendingHtml +
+                currentStreamingBodySuffixHtml +
+                "</body></html>";
+        responseTextPane.setContentType("text/html");
+        responseTextPane.setEditorKit(new HTMLEditorKit());
+        responseTextPane.setText(html);
     }
 
     /**
-     * Clear the response document and switch to plain text streaming mode.
-     * PERFORMANCE: Plain text mode is used during streaming for better performance.
+     * Ensure the response pane has an HTMLDocument.
+     * When streaming starts before HTML initialization finishes, Swing may still
+     * expose a DefaultStyledDocument. Recover by rebuilding the HTML document.
+     */
+    private HTMLDocument ensureHtmlDocument() {
+        Document currentDoc = responseTextPane.getDocument();
+        if (currentDoc instanceof HTMLDocument) {
+            return (HTMLDocument) currentDoc;
+        }
+
+        Msg.warn(this, "Query response document is not HTMLDocument (" +
+                currentDoc.getClass().getName() + "); rebuilding HTML view.");
+
+        responseTextPane.setContentType("text/html");
+        responseTextPane.setEditorKit(new HTMLEditorKit());
+        String repairedHtml = "<html><head><style>" + getStreamingCSS() + "</style></head><body>" +
+                currentStreamingPrefixHtml +
+                currentStreamingBodyPrefixHtml +
+                "<div id=\"committed\">" + accumulatedCommittedHtml + "</div>" +
+                "<div id=\"pending\">" + lastPendingHtml + "</div>" +
+                currentStreamingBodySuffixHtml +
+                "</body></html>";
+        responseTextPane.setText(repairedHtml);
+
+        Document repairedDoc = responseTextPane.getDocument();
+        if (repairedDoc instanceof HTMLDocument) {
+            return (HTMLDocument) repairedDoc;
+        }
+
+        Msg.error(this, "Failed to recover HTMLDocument for query streaming", null);
+        return null;
+    }
+
+    private Element findElement(HTMLDocument doc, String id) {
+        return findElementById(doc.getDefaultRootElement(), id);
+    }
+
+    private Element findElementById(Element element, String id) {
+        // Check this element's attributes for an id
+        Object idAttr = element.getAttributes().getAttribute(HTML.Attribute.ID);
+        if (id.equals(idAttr)) {
+            return element;
+        }
+
+        // Recursively search children
+        for (int i = 0; i < element.getElementCount(); i++) {
+            Element found = findElementById(element.getElement(i), id);
+            if (found != null) {
+                return found;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Clear the response and prepare for streaming.
      */
     public void clearResponse() {
-        SwingUtilities.invokeLater(() -> {
-            try {
-                // Switch to plain text mode for fast streaming
-                responseTextPane.setContentType("text/plain");
-                responseDocument = responseTextPane.getStyledDocument();
-                responseDocument.remove(0, responseDocument.getLength());
-            } catch (BadLocationException e) {
-                Msg.error(this, "Error clearing response", e);
-            }
-        });
+        initializeForStreaming("");
     }
 
     public void appendToResponse(String html) {
@@ -464,10 +849,32 @@ public class QueryTab extends JPanel {
         
         for (AnalysisDB.ChatSession session : sessions) {
             // Convert SQL Timestamp to Date and format in local timezone
-            Date localDate = new Date(session.getLastUpdate().getTime());
-            String formattedDate = dateFormat.format(localDate);
-            chatHistoryModel.addRow(new Object[]{session.getDescription(), formattedDate});
+            String formattedDate = "-";
+            if (session.getLastUpdate() != null) {
+                Date localDate = new Date(session.getLastUpdate().getTime());
+                formattedDate = dateFormat.format(localDate);
+            }
+            chatHistoryModel.addRow(new Object[]{
+                session.getDescription(),
+                formattedDate,
+                toDisplayChatType(session.getChatType())
+            });
         }
+    }
+
+    private String toDisplayChatType(String chatType) {
+        if (chatType == null) {
+            return "Chat";
+        }
+
+        return switch (chatType) {
+            case "general" -> "General";
+            case "malware_report" -> "Malware Report";
+            case "vuln_analysis" -> "Vulnerability Analysis";
+            case "api_doc", "protocol_spec" -> "API Documentation";
+            case "notes" -> "Notes";
+            default -> "Chat";
+        };
     }
     
     /**
@@ -518,10 +925,20 @@ public class QueryTab extends JPanel {
 
         JMenuItem copyHtml = new JMenuItem("Copy as HTML");
         copyHtml.addActionListener(e -> {
-            String selectedText = responseTextPane.getSelectedText();
-            if (selectedText != null && !selectedText.isEmpty()) {
-                // For HTML, get from the rendered content
-                copyToClipboard(selectedText);
+            if (isEditMode) {
+                String selectedText = markdownEditArea.getSelectedText();
+                if (selectedText != null && !selectedText.isEmpty()) {
+                    copyToClipboard(selectedText);
+                }
+            } else {
+                int start = responseTextPane.getSelectionStart();
+                int end = responseTextPane.getSelectionEnd();
+                if (start != end) {
+                    String html = extractSelectedHtml(start, end);
+                    if (html != null && !html.isEmpty()) {
+                        copyToClipboard(html);
+                    }
+                }
             }
         });
 
@@ -531,9 +948,7 @@ public class QueryTab extends JPanel {
                     markdownEditArea.getSelectedText() :
                     responseTextPane.getSelectedText();
             if (selectedText != null && !selectedText.isEmpty()) {
-                // Strip markdown formatting for plain text
-                String plainText = selectedText.replaceAll("\\*\\*|__|`|#+ |\\[|\\]\\([^)]*\\)", "");
-                copyToClipboard(plainText);
+                copyToClipboard(selectedText);
             }
         });
 
@@ -581,19 +996,159 @@ public class QueryTab extends JPanel {
 
         responseTextPane.setComponentPopupMenu(contextMenu);
         markdownEditArea.setComponentPopupMenu(contextMenu);
+
+        // Override CTRL-C to copy markdown from view mode
+        responseTextPane.getActionMap().put("copy", new AbstractAction() {
+            private static final long serialVersionUID = 1L;
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                String md = getSelectedMarkdownText();
+                if (md != null && !md.isEmpty()) {
+                    copyToClipboard(md);
+                }
+            }
+        });
     }
 
     /**
-     * Get selected markdown text based on selection in view mode
+     * Get selected markdown text based on selection in view mode.
+     * Maps the rendered plain text selection back to the corresponding lines
+     * in the markdown source by stripping markdown formatting for comparison.
+     * Returns null if nothing is selected.
      */
     private String getSelectedMarkdownText() {
-        // If there's selected text in the response pane, try to map to markdown
         String selectedText = responseTextPane.getSelectedText();
-        if (selectedText != null && !selectedText.isEmpty()) {
-            // For now, return the selected text - could be enhanced to map to actual markdown
+        if (selectedText == null || selectedText.isEmpty()) {
+            return null;
+        }
+        if (currentMarkdownSource == null || currentMarkdownSource.isEmpty()) {
             return selectedText;
         }
-        return currentMarkdownSource;
+        return mapRenderedTextToMarkdown(selectedText, currentMarkdownSource);
+    }
+
+    /**
+     * Map rendered plain text back to the corresponding region in the markdown source.
+     *
+     * Builds a single normalized plain-text document from the markdown (stripping all
+     * formatting), then finds the normalized selection text within it as a contiguous
+     * substring. This avoids false matches from short individual lines like "Summary"
+     * matching unrelated lines containing that word.
+     *
+     * Once the match position is found, it maps back to the original markdown line
+     * numbers and returns those lines with formatting preserved.
+     */
+    private static String mapRenderedTextToMarkdown(String renderedText, String markdownSource) {
+        String[] mdLines = markdownSource.split("\\n", -1);
+
+        // Strip each markdown line and build a single normalized document,
+        // tracking which markdown line each character range came from.
+        String[] strippedLines = new String[mdLines.length];
+        for (int i = 0; i < mdLines.length; i++) {
+            strippedLines[i] = stripMarkdownFormatting(mdLines[i]).trim();
+        }
+
+        StringBuilder docBuilder = new StringBuilder();
+        int[] lineDocStart = new int[mdLines.length];
+        int[] lineDocEnd = new int[mdLines.length];
+        for (int i = 0; i < mdLines.length; i++) {
+            lineDocStart[i] = -1;
+            lineDocEnd[i] = -1;
+        }
+
+        for (int i = 0; i < strippedLines.length; i++) {
+            if (strippedLines[i].isEmpty()) continue;
+            if (docBuilder.length() > 0) {
+                docBuilder.append(' ');
+            }
+            lineDocStart[i] = docBuilder.length();
+            docBuilder.append(strippedLines[i]);
+            lineDocEnd[i] = docBuilder.length();
+        }
+
+        // Normalize both selection and document: collapse all whitespace to single space
+        String normalizedSelection = renderedText.replaceAll("\\s+", " ").trim();
+        if (normalizedSelection.isEmpty()) {
+            return renderedText;
+        }
+        String normalizedDoc = docBuilder.toString();
+
+        // Find the full selection in the stripped document
+        int matchPos = normalizedDoc.indexOf(normalizedSelection);
+
+        // If exact match fails, try a shorter leading prefix (selection boundary may
+        // have clipped a word)
+        if (matchPos < 0 && normalizedSelection.length() > 40) {
+            matchPos = normalizedDoc.indexOf(normalizedSelection.substring(0, 40));
+        }
+
+        if (matchPos >= 0) {
+            int matchEnd = Math.min(matchPos + normalizedSelection.length(), normalizedDoc.length());
+
+            // Find the markdown lines whose stripped text overlaps the match range
+            int startLine = -1;
+            int endLine = -1;
+            for (int i = 0; i < mdLines.length; i++) {
+                if (lineDocStart[i] == -1) continue; // empty line
+                if (lineDocEnd[i] > matchPos && lineDocStart[i] < matchEnd) {
+                    if (startLine == -1) startLine = i;
+                    endLine = i;
+                }
+            }
+
+            if (startLine >= 0 && endLine >= startLine) {
+                StringBuilder result = new StringBuilder();
+                for (int i = startLine; i <= endLine; i++) {
+                    if (i > startLine) result.append('\n');
+                    result.append(mdLines[i]);
+                }
+                return result.toString();
+            }
+        }
+
+        // Fallback: return the plain text selection
+        return renderedText;
+    }
+
+    /**
+     * Strip markdown formatting from a line for plain-text comparison.
+     * Removes headers, bold, italic, code, links, list markers, blockquotes, etc.
+     */
+    private static String stripMarkdownFormatting(String line) {
+        String s = line;
+        s = s.replaceAll("^#{1,6}\\s+", "");
+        s = s.replaceAll("\\*\\*(.+?)\\*\\*", "$1");
+        s = s.replaceAll("__(.+?)__", "$1");
+        s = s.replaceAll("\\*(.+?)\\*", "$1");
+        s = s.replaceAll("(?<=\\s|^)_(.+?)_(?=\\s|$)", "$1");
+        s = s.replaceAll("`([^`]+)`", "$1");
+        s = s.replaceAll("\\[([^\\]]+)\\]\\([^)]+\\)", "$1");
+        s = s.replaceAll("!\\[([^\\]]*)]\\([^)]+\\)", "$1");
+        s = s.replaceAll("^\\s*[-*+]\\s+", "");
+        s = s.replaceAll("^\\s*\\d+\\.\\s+", "");
+        s = s.replaceAll("^>+\\s?", "");
+        s = s.replaceAll("~~(.+?)~~", "$1");
+        return s;
+    }
+
+    /**
+     * Extract HTML content for the selected range from the JTextPane's document.
+     */
+    private String extractSelectedHtml(int start, int end) {
+        try {
+            Document doc = responseTextPane.getDocument();
+            if (doc instanceof HTMLDocument) {
+                HTMLEditorKit kit = new HTMLEditorKit();
+                StringWriter writer = new StringWriter();
+                kit.write(writer, doc, start, end - start);
+                return writer.toString();
+            }
+            // Fallback for non-HTML documents
+            return responseTextPane.getSelectedText();
+        } catch (Exception e) {
+            Msg.warn(this, "Failed to extract HTML: " + e.getMessage());
+            return responseTextPane.getSelectedText();
+        }
     }
 
     /**
@@ -618,6 +1173,7 @@ public class QueryTab extends JPanel {
     public void setEditableContent(String markdown) {
         currentMarkdownSource = markdown;
         markdownEditArea.setText(markdown);
+        markdownEditArea.setCaretPosition(0);
     }
 
     /**
@@ -656,6 +1212,94 @@ public class QueryTab extends JPanel {
             contentLayout.show(contentPanel, "view");
             editSaveButton.setText("Edit");
             isEditMode = false;
+        }
+    }
+
+    public void setEditEnabled(boolean enabled) {
+        if (!enabled) {
+            exitEditMode();
+        }
+        editSaveButton.setEnabled(enabled);
+        editSaveButton.setToolTipText(enabled
+            ? "Edit the most recent assistant response"
+            : "No assistant response is available to edit yet.");
+    }
+
+    public void setContextStatus(String contextStatus) {
+        String text = contextStatus != null && !contextStatus.isBlank()
+            ? contextStatus
+            : "Model: No provider / No model | No active context window data";
+        if (SwingUtilities.isEventDispatchThread()) {
+            contextStatusLabel.setText(text);
+        } else {
+            SwingUtilities.invokeLater(() -> contextStatusLabel.setText(text));
+        }
+    }
+
+    public void setPendingApproval(QueryService.PendingApprovalView pendingApproval) {
+        Runnable updateUi = () -> {
+            currentPendingApprovalRequestId = pendingApproval != null ? pendingApproval.getRequestId() : null;
+            if (pendingApproval == null) {
+                approvalPanel.setVisible(false);
+                approvalSummaryLabel.setText(" ");
+                approvalArgsArea.setText("");
+                approvalPanel.revalidate();
+                approvalPanel.repaint();
+                return;
+            }
+
+            approvalSummaryLabel.setText(String.format(
+                "Approval required: %s [%s] from %s",
+                pendingApproval.getToolName(),
+                pendingApproval.getRiskTier().name().toLowerCase(),
+                pendingApproval.getToolSource()
+            ));
+            approvalArgsArea.setText(pendingApproval.getArgsPreview());
+            approvalArgsArea.setCaretPosition(0);
+            approvalPanel.setVisible(true);
+            approvalPanel.revalidate();
+            approvalPanel.repaint();
+        };
+
+        if (SwingUtilities.isEventDispatchThread()) {
+            updateUi.run();
+        } else {
+            SwingUtilities.invokeLater(updateUi);
+        }
+    }
+
+    public void setPendingPlan(String planMarkdown) {
+        Runnable updateUi = () -> {
+            if (planMarkdown == null || planMarkdown.isBlank()) {
+                planPanel.setVisible(false);
+                planTextArea.setText("");
+            } else {
+                planTextArea.setText(planMarkdown);
+                planTextArea.setCaretPosition(0);
+                planPanel.setVisible(true);
+            }
+            planPanel.revalidate();
+            planPanel.repaint();
+        };
+
+        if (SwingUtilities.isEventDispatchThread()) {
+            updateUi.run();
+        } else {
+            SwingUtilities.invokeLater(updateUi);
+        }
+    }
+
+    public void setAcceptAllToolsState(boolean enabled, boolean selected) {
+        Runnable updateUi = () -> {
+            // Keep this interactive like the MCP/ReAct toggles. The controller
+            // will create a session on demand when the user enables it.
+            acceptAllToolsCheckBox.setEnabled(true);
+            acceptAllToolsCheckBox.setSelected(selected);
+        };
+        if (SwingUtilities.isEventDispatchThread()) {
+            updateUi.run();
+        } else {
+            SwingUtilities.invokeLater(updateUi);
         }
     }
 

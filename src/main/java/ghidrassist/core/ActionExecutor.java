@@ -31,6 +31,7 @@ import ghidra.program.model.pcode.HighVariable;
 import ghidra.program.model.symbol.SourceType;
 import ghidra.util.Msg;
 import ghidra.util.data.DataTypeParser;
+import ghidrassist.AnalysisDB;
 import ghidra.util.exception.CancelledException;
 import ghidra.util.exception.DuplicateNameException;
 import ghidra.util.exception.InvalidInputException;
@@ -79,22 +80,63 @@ public class ActionExecutor {
         }
     }
 
-    private static void executeFunctionRename(JsonObject arguments, Program program, Address address) 
+    /**
+     * Execute an action and record LLM renames for provenance tracking.
+     */
+    public static void executeAction(String action, String argumentsJson, Program program, Address address,
+                                     AnalysisDB analysisDB, String binaryId) throws Exception {
+        JsonObject arguments = gson.fromJson(argumentsJson, JsonObject.class);
+
+        int transaction = program.startTransaction("Execute " + action);
+        boolean success = false;
+
+        try {
+            switch (action) {
+                case "rename_function":
+                    executeFunctionRename(arguments, program, address);
+                    if (analysisDB != null && binaryId != null) {
+                        String newName = arguments.get("new_name").getAsString().strip();
+                        analysisDB.recordLlmRename(binaryId, address.getOffset(), "function", newName);
+                    }
+                    break;
+                case "rename_variable":
+                    executeVariableRename(arguments, program, address);
+                    if (analysisDB != null && binaryId != null) {
+                        String newName = arguments.get("new_name").getAsString().strip();
+                        analysisDB.recordLlmRename(binaryId, address.getOffset(), "variable", newName);
+                    }
+                    break;
+                case "retype_variable":
+                    executeVariableRetype(arguments, program, address);
+                    break;
+                case "auto_create_struct":
+                    executeAutoCreateStruct(arguments, program, address);
+                    break;
+                default:
+                    throw new InvalidInputException("Unknown action: " + action);
+            }
+            success = true;
+        } finally {
+            program.endTransaction(transaction, success);
+        }
+    }
+
+    private static void executeFunctionRename(JsonObject arguments, Program program, Address address)
             throws InvalidInputException, DuplicateNameException {
         String newName = arguments.get("new_name").getAsString().strip();
         Function function = getFunctionAtAddress(program, address);
-        
+
         function.setName(newName, SourceType.USER_DEFINED);
     }
 
-    private static void executeVariableRename(JsonObject arguments, Program program, Address address) 
+    private static void executeVariableRename(JsonObject arguments, Program program, Address address)
             throws InvalidInputException, DuplicateNameException {
         String varName = arguments.get("var_name").getAsString().strip();
         String newName = arguments.get("new_name").getAsString().strip();
-        
+
         Function function = getFunctionAtAddress(program, address);
         Variable variable = findVariable(function, varName);
-        
+
         variable.setName(newName, SourceType.USER_DEFINED);
     }
 

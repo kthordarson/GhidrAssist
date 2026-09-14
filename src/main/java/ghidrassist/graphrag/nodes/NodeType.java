@@ -19,6 +19,12 @@ public enum NodeType {
     FUNCTION(0, "Function"),
 
     /**
+     * External/imported function (PLT stub, thunk, or library import).
+     * Same level as FUNCTION but visually distinguished.
+     */
+    EXTERNAL(0, "External"),
+
+    /**
      * Community/module of related functions detected via Leiden algorithm.
      * Represents subsystems and logical groupings.
      */

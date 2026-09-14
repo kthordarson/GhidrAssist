@@ -41,6 +41,7 @@ public class OAuthTokenManager {
     
     private final OkHttpClient httpClient;
     private final Gson gson;
+    private final Object refreshLock = new Object();
     
     // Token storage
     private String accessToken;
@@ -287,12 +288,17 @@ public class OAuthTokenManager {
         if (!isAuthenticated()) {
             throw new IllegalStateException("Not authenticated. Call authenticate() first.");
         }
-        
-        if (isTokenExpired()) {
-            refreshAccessToken();
+
+        if (!isTokenExpired()) {
+            return accessToken;
         }
-        
-        return accessToken;
+
+        synchronized (refreshLock) {
+            if (isTokenExpired()) {
+                refreshAccessTokenLocked();
+            }
+            return accessToken;
+        }
     }
     
     /**
@@ -301,6 +307,12 @@ public class OAuthTokenManager {
      * @throws IOException If refresh fails
      */
     public void refreshAccessToken() throws IOException {
+        synchronized (refreshLock) {
+            refreshAccessTokenLocked();
+        }
+    }
+
+    private void refreshAccessTokenLocked() throws IOException {
         if (refreshToken == null || refreshToken.isEmpty()) {
             throw new IllegalStateException("No refresh token available. Re-authentication required.");
         }
@@ -328,6 +340,9 @@ public class OAuthTokenManager {
             String body = response.body() != null ? response.body().string() : "";
             
             if (!response.isSuccessful()) {
+                if (isTerminalRefreshTokenFailure(response.code(), body)) {
+                    clearCredentialsAfterRefreshFailure();
+                }
                 Msg.error(this, "Token refresh failed: " + response.code() + " - " + body);
                 throw new IOException("Token refresh failed: " + response.code() + " - " + body);
             }
@@ -342,6 +357,31 @@ public class OAuthTokenManager {
             
             Msg.info(this, "OAuth access token refreshed successfully");
         }
+    }
+
+    private boolean isTerminalRefreshTokenFailure(int statusCode, String body) {
+        if (statusCode != 400 && statusCode != 401) {
+            return false;
+        }
+        String lowerBody = body != null ? body.toLowerCase() : "";
+        return lowerBody.contains("refresh_token_reused") ||
+            lowerBody.contains("refresh token has already been used") ||
+            lowerBody.contains("refresh_token_expired") ||
+            lowerBody.contains("refresh token has expired") ||
+            lowerBody.contains("expired refresh token") ||
+            lowerBody.contains("refresh_token_revoked") ||
+            lowerBody.contains("refresh token has been revoked") ||
+            lowerBody.contains("refresh token revoked") ||
+            lowerBody.contains("refresh_token_invalid") ||
+            lowerBody.contains("invalid refresh token") ||
+            lowerBody.contains("refresh token is invalid") ||
+            lowerBody.contains("invalid_grant");
+    }
+
+    private void clearCredentialsAfterRefreshFailure() {
+        accessToken = null;
+        refreshToken = null;
+        expiresAt = 0;
     }
     
     /**

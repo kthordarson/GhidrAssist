@@ -25,6 +25,7 @@ public class OpenAIOAuthProviderFactory implements APIProviderFactory {
             config.getUrl(),
             config.getKey(),  // Contains OAuth credentials as JSON
             config.isDisableTlsVerification(),
+            config.isBypassProxy(),
             config.getTimeout()
         );
     }

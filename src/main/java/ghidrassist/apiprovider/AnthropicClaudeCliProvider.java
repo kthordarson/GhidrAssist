@@ -44,10 +44,10 @@ public class AnthropicClaudeCliProvider extends APIProvider implements FunctionC
 
     public AnthropicClaudeCliProvider(String name, String model, Integer maxTokens,
                               String url, String key, boolean disableTlsVerification,
-                              Integer timeout) {
+                              boolean bypassProxy, Integer timeout) {
         super(name, ProviderType.ANTHROPIC_CLAUDE_CLI, model, maxTokens,
               url != null ? url : "", key != null ? key : "",
-              disableTlsVerification, timeout != null ? timeout : 300);
+              disableTlsVerification, bypassProxy, timeout != null ? timeout : 90);
 
         // Default model to "sonnet" if not specified
         if (this.model == null || this.model.isEmpty()) {
@@ -59,7 +59,7 @@ public class AnthropicClaudeCliProvider extends APIProvider implements FunctionC
     protected OkHttpClient buildClient() {
         // CLI-based provider doesn't use HTTP client, but we need to return something
         // for the base class. Build a minimal client.
-        return new OkHttpClient.Builder()
+        return configureClientBuilder(new OkHttpClient.Builder())
             .connectTimeout(Duration.ofSeconds(10))
             .readTimeout(super.timeout)
             .writeTimeout(super.timeout)
@@ -250,15 +250,36 @@ public class AnthropicClaudeCliProvider extends APIProvider implements FunctionC
         JsonObject mcpServers = new JsonObject();
 
         for (MCPServerConfig server : enabledServers) {
-            String serverUrl = server.getUrl();
-            if (serverUrl == null || serverUrl.isEmpty()) {
-                continue;
-            }
-
             JsonObject serverConfig = new JsonObject();
             String transport = server.getTransport().name().toLowerCase();
-            serverConfig.addProperty("type", "sse".equals(transport) ? "sse" : "http");
-            serverConfig.addProperty("url", server.getBaseUrl());
+            if ("stdio".equals(transport)) {
+                String command = server.getCommand();
+                if (command == null || command.isBlank()) {
+                    continue;
+                }
+                serverConfig.addProperty("command", command);
+                JsonArray args = new JsonArray();
+                for (String arg : server.getArgs()) {
+                    args.add(arg);
+                }
+                JsonObject env = new JsonObject();
+                for (Map.Entry<String, String> entry : server.getEnv().entrySet()) {
+                    env.addProperty(entry.getKey(), entry.getValue());
+                }
+                serverConfig.add("args", args);
+                serverConfig.add("env", env);
+            } else if ("sse".equals(transport) || "streamable_http".equals(transport)) {
+                String serverUrl = server.getUrl();
+                if (serverUrl == null || serverUrl.isEmpty()) {
+                    continue;
+                }
+
+                String cliType = "sse".equals(transport) ? "sse" : "streamable-http";
+                serverConfig.addProperty("type", cliType);
+                serverConfig.addProperty("url", server.getBaseUrl());
+            } else {
+                continue;
+            }
 
             mcpServers.add(server.getName(), serverConfig);
         }
@@ -578,12 +599,12 @@ public class AnthropicClaudeCliProvider extends APIProvider implements FunctionC
 
     @Override
     public List<String> getAvailableModels() throws APIProviderException {
-        // Claude Code CLI supports these model shortcuts
-        List<String> models = new ArrayList<>();
-        models.add("sonnet");
-        models.add("opus");
-        models.add("haiku");
-        return models;
+        throw new APIProviderException(
+            APIProviderException.ErrorCategory.CONFIGURATION,
+            "Model discovery is not supported for Claude Code CLI",
+            getName(),
+            "getAvailableModels"
+        );
     }
 
     @Override
@@ -599,11 +620,14 @@ public class AnthropicClaudeCliProvider extends APIProvider implements FunctionC
     /**
      * Test connection by checking if CLI is available and authenticated.
      */
-    public boolean testConnection() {
+    @Override
+    public void testConnection() throws APIProviderException {
         String cliPath = findClaudeCli();
         if (cliPath == null) {
-            Msg.warn(this, "Claude CLI not found");
-            return false;
+            throw new APIProviderException(
+                APIProviderException.ErrorCategory.CONFIGURATION,
+                "Claude CLI not found", getName(), "testConnection"
+            );
         }
 
         try {
@@ -611,7 +635,7 @@ public class AnthropicClaudeCliProvider extends APIProvider implements FunctionC
             pb.redirectErrorStream(true);
             Process process = pb.start();
 
-            boolean completed = process.waitFor(10, TimeUnit.SECONDS);
+            boolean completed = process.waitFor(super.timeout.getSeconds(), TimeUnit.SECONDS);
 
             if (completed && process.exitValue() == 0) {
                 try (BufferedReader reader = new BufferedReader(
@@ -619,16 +643,18 @@ public class AnthropicClaudeCliProvider extends APIProvider implements FunctionC
                     String version = reader.readLine();
                     Msg.info(this, "Claude CLI version: " + version);
                 }
-                return true;
-            } else {
-                Msg.warn(this, "Claude CLI version check failed with exit code: " +
-                        process.exitValue());
+                return;
             }
+            throw new APIProviderException(
+                APIProviderException.ErrorCategory.SERVICE_ERROR,
+                "Claude CLI version check failed", getName(), "testConnection"
+            );
         } catch (Exception e) {
-            Msg.error(this, "Claude CLI test failed: " + e.getMessage());
+            throw new APIProviderException(
+                APIProviderException.ErrorCategory.SERVICE_ERROR,
+                e.getMessage(), getName(), "testConnection"
+            );
         }
-
-        return false;
     }
 
     /**

@@ -6,8 +6,11 @@ import ghidrassist.apiprovider.APIProvider;
 import ghidrassist.apiprovider.ChatMessage;
 import ghidrassist.apiprovider.exceptions.APIProviderException;
 import ghidrassist.graphrag.BinaryKnowledgeGraph;
+import ghidrassist.graphrag.SemanticAnalysisOptions;
 import ghidrassist.graphrag.nodes.KnowledgeNode;
 import ghidrassist.graphrag.nodes.NodeType;
+import ghidrassist.LlmApi;
+import ghidrassist.core.ResponseProcessor;
 
 import java.util.*;
 import java.util.concurrent.*;
@@ -33,8 +36,10 @@ public class SemanticExtractor {
 
     private final APIProvider provider;
     private final BinaryKnowledgeGraph graph;
+    private final ResponseProcessor responseProcessor = new ResponseProcessor();
     @SuppressWarnings("unused")  // Reserved for future multi-binary support
     private final String binaryId;
+    private final String systemPrompt;
 
     // Parallel processing workers
     private static final int PARALLEL_WORKERS = 3;
@@ -64,9 +69,16 @@ public class SemanticExtractor {
      * @param graph    Knowledge graph to update
      */
     public SemanticExtractor(APIProvider provider, BinaryKnowledgeGraph graph) {
+        this(provider, graph, "You are a binary analysis assistant. Provide concise, technical summaries focused on functionality and security.");
+    }
+
+    public SemanticExtractor(APIProvider provider, BinaryKnowledgeGraph graph, String systemPrompt) {
         this.provider = provider;
         this.graph = graph;
         this.binaryId = graph.getBinaryId();
+        this.systemPrompt = (systemPrompt != null && !systemPrompt.isBlank())
+            ? systemPrompt
+            : "You are a binary analysis assistant. Provide concise, technical summaries focused on functionality and security.";
         this.batchSize = DEFAULT_BATCH_SIZE;
         this.delayBetweenBatches = DEFAULT_DELAY_MS;
     }
@@ -87,6 +99,11 @@ public class SemanticExtractor {
      * @return ExtractionResult with statistics
      */
     public ExtractionResult summarizeStaleNodes(int limit, ProgressCallback progressCallback) {
+        return summarizeStaleNodes(limit, progressCallback, SemanticAnalysisOptions.defaults());
+    }
+
+    public ExtractionResult summarizeStaleNodes(int limit, ProgressCallback progressCallback,
+                                                SemanticAnalysisOptions options) {
         long startTime = System.currentTimeMillis();
         cancelled = false;
         summarized.set(0);
@@ -95,7 +112,11 @@ public class SemanticExtractor {
         processed.set(0);
 
         // Get stale nodes
-        List<KnowledgeNode> staleNodes = graph.getStaleNodes(limit > 0 ? limit : Integer.MAX_VALUE);
+        SemanticAnalysisOptions effectiveOptions = options != null ? options : SemanticAnalysisOptions.defaults();
+        int effectiveLimit = limit > 0 ? limit : effectiveOptions.getMaxNodes();
+        List<KnowledgeNode> staleNodes = graph.getStaleNodes(
+                effectiveLimit > 0 ? effectiveLimit : Integer.MAX_VALUE,
+                effectiveOptions);
         int total = staleNodes.size();
 
         if (total == 0) {
@@ -118,6 +139,14 @@ public class SemanticExtractor {
         }
 
         // Process nodes with parallel workers
+        try {
+            provider.prepareForConcurrentRequests();
+        } catch (APIProviderException e) {
+            Msg.error(this, "Failed to prepare provider for concurrent semantic requests: " + e.getMessage(), e);
+            errors.incrementAndGet();
+            long elapsed = System.currentTimeMillis() - startTime;
+            return new ExtractionResult(summarized.get(), embeddingsGenerated.get(), errors.get(), elapsed);
+        }
         Msg.info(this, "Using " + PARALLEL_WORKERS + " parallel workers");
         ExecutorService executor = Executors.newFixedThreadPool(PARALLEL_WORKERS);
 
@@ -258,21 +287,9 @@ public class SemanticExtractor {
                     node.setLlmSummary(response);
                     node.setConfidence(0.85f);
 
-                    // Extract security flags if present (supports both old and new format)
-                    String security = ExtractionPrompts.extractSecurity(response);
-                    if (security == null) {
-                        security = ExtractionPrompts.extractSecurityNotes(response);
-                    }
-                    if (security != null && !security.toLowerCase().contains("none") &&
-                        !security.toLowerCase().contains("no security") &&
-                        !security.toLowerCase().contains("not applicable")) {
-                        node.addSecurityFlag("LLM_FLAGGED");
-                    }
-
-                    // Extract and store category if present
                     String category = ExtractionPrompts.extractCategory(response);
                     if (category != null && !category.isEmpty()) {
-                        node.addSecurityFlag("CATEGORY_" + category.toUpperCase().replace(" ", "_"));
+                        node.setCategory(category);
                     }
                 }
             } else {
@@ -366,21 +383,9 @@ public class SemanticExtractor {
                 node.setLlmSummary(response);
                 node.setConfidence(0.85f);
 
-                // Extract security flags if present
-                String security = ExtractionPrompts.extractSecurity(response);
-                if (security == null) {
-                    security = ExtractionPrompts.extractSecurityNotes(response);
-                }
-                if (security != null && !security.toLowerCase().contains("none") &&
-                    !security.toLowerCase().contains("no security") &&
-                    !security.toLowerCase().contains("not applicable")) {
-                    node.addSecurityFlag("LLM_FLAGGED");
-                }
-
-                // Extract and store category if present
                 String category = ExtractionPrompts.extractCategory(response);
                 if (category != null && !category.isEmpty()) {
-                    node.addSecurityFlag("CATEGORY_" + category.toUpperCase().replace(" ", "_"));
+                    node.setCategory(category);
                 }
 
                 node.markUpdated();
@@ -494,23 +499,9 @@ public class SemanticExtractor {
                 node.setLlmSummary(response);
                 node.setConfidence(0.85f);
 
-                // Extract security flags if present (supports both old and new format)
-                String security = ExtractionPrompts.extractSecurity(response);
-                if (security == null) {
-                    // Fall back to legacy format
-                    security = ExtractionPrompts.extractSecurityNotes(response);
-                }
-                if (security != null && !security.toLowerCase().contains("none") &&
-                    !security.toLowerCase().contains("no security") &&
-                    !security.toLowerCase().contains("not applicable")) {
-                    node.addSecurityFlag("LLM_FLAGGED");
-                }
-
-                // Extract and store category if present
                 String category = ExtractionPrompts.extractCategory(response);
                 if (category != null && !category.isEmpty()) {
-                    // Store category as a security flag for searchability
-                    node.addSecurityFlag("CATEGORY_" + category.toUpperCase().replace(" ", "_"));
+                    node.setCategory(category);
                 }
 
                 node.markUpdated();
@@ -616,11 +607,11 @@ public class SemanticExtractor {
 
         try {
             List<ChatMessage> messages = new ArrayList<>();
-            messages.add(new ChatMessage("system",
-                    "You are a binary analysis assistant. Provide concise, technical summaries focused on functionality and security."));
+            messages.add(new ChatMessage("system", systemPrompt));
             messages.add(new ChatMessage("user", prompt));
 
             String response = provider.createChatCompletion(messages);
+            response = responseProcessor.filterThinkBlocks(response);
             Msg.info(this, "callLLM: received response " +
                     (response != null ? response.length() + " chars" : "null"));
             return response;
@@ -691,5 +682,261 @@ public class SemanticExtractor {
      */
     public interface ProgressCallback {
         void onProgress(int processed, int total, int summarized, int errors);
+    }
+
+    // ========================================
+    // Streaming Summary Support
+    // ========================================
+
+    /**
+     * Callback interface for streaming summary updates.
+     */
+    public interface StreamingSummaryCallback {
+        /**
+         * Called when streaming starts.
+         */
+        void onStart();
+
+        /**
+         * Called when a partial summary is available.
+         * @param accumulated The accumulated response so far
+         */
+        void onPartialSummary(String accumulated);
+
+        /**
+         * Called when the summary is complete.
+         * @param fullSummary The complete summary
+         * @param updatedNode The node with updated summary and metadata
+         */
+        void onSummaryComplete(String fullSummary, KnowledgeNode updatedNode);
+
+        /**
+         * Called when an error occurs.
+         * @param error The error that occurred
+         */
+        void onError(Throwable error);
+
+        /**
+         * Called when the LLM enters or exits a thinking block.
+         * @param thinking true when entering a think block, false when exiting
+         */
+        default void onThinkingStateChanged(boolean thinking) {}
+
+        /**
+         * Check if streaming should continue.
+         * @return true to continue, false to cancel
+         */
+        default boolean shouldContinue() { return true; }
+    }
+
+    /**
+     * Summarize a node with streaming updates.
+     * Similar to summarizeNode() but calls callback as text arrives.
+     *
+     * @param node The knowledge node to summarize (must be a FUNCTION node)
+     * @param callback The callback to receive streaming updates
+     */
+    public void summarizeNodeStreaming(KnowledgeNode node, StreamingSummaryCallback callback) {
+        if (node == null) {
+            callback.onError(new IllegalArgumentException("Node cannot be null"));
+            return;
+        }
+
+        if (node.getType() != NodeType.FUNCTION) {
+            callback.onError(new IllegalArgumentException("Only FUNCTION nodes are supported for streaming summarization"));
+            return;
+        }
+
+        if (node.getRawContent() == null || node.getRawContent().isEmpty()) {
+            callback.onError(new IllegalArgumentException("Node has no raw content to summarize"));
+            return;
+        }
+
+        // Get context (callers/callees) if graph is available
+        List<String> callers = new ArrayList<>();
+        List<String> callees = new ArrayList<>();
+
+        if (graph != null) {
+            callers = graph.getCallers(node.getId()).stream()
+                    .map(n -> n.getName() != null ? n.getName() : "unknown")
+                    .limit(5)
+                    .collect(Collectors.toList());
+
+            callees = graph.getCallees(node.getId()).stream()
+                    .map(n -> n.getName() != null ? n.getName() : "unknown")
+                    .limit(5)
+                    .collect(Collectors.toList());
+        }
+
+        // Generate full detailed prompt
+        String prompt = ExtractionPrompts.functionSummaryPrompt(
+                node.getName() != null ? node.getName() : "unknown",
+                node.getRawContent(),
+                callers,
+                callees
+        );
+
+        callback.onStart();
+
+        // Use streaming LLM call
+        callLLMStreaming(prompt, new LlmApi.LlmResponseHandler() {
+            // Track accumulated content for streaming updates
+            private final StringBuilder accumulated = new StringBuilder();
+            // Safe accumulator that never resets - used for final storage
+            private final StringBuilder safeAccumulated = new StringBuilder();
+
+            @Override
+            public void onStart() {
+                // Already called callback.onStart() above
+            }
+
+            @Override
+            public void onUpdate(String partialResponse) {
+                // Extract delta from cumulative response
+                String current = accumulated.toString();
+                String delta;
+                if (partialResponse.startsWith(current)) {
+                    delta = partialResponse.substring(current.length());
+                    accumulated.append(delta);
+                } else {
+                    // If provider gives full response each time
+                    delta = partialResponse;
+                    accumulated.setLength(0);
+                    accumulated.append(partialResponse);
+                }
+
+                // Always append delta to safe accumulator (never reset)
+                if (!delta.isEmpty()) {
+                    safeAccumulated.append(delta);
+                }
+
+                if (!accumulated.toString().isEmpty()) {
+                    callback.onPartialSummary(accumulated.toString());
+                }
+            }
+
+            @Override
+            public void onComplete(String fullResponse) {
+                // Prefer fullResponse from provider, then safeAccumulated, then accumulated
+                String finalResponse;
+                if (fullResponse != null && !fullResponse.isEmpty()) {
+                    finalResponse = fullResponse;
+                } else if (safeAccumulated.length() > 0) {
+                    finalResponse = safeAccumulated.toString();
+                } else {
+                    finalResponse = accumulated.toString();
+                }
+
+                // Update node with response
+                extractAndUpdateNode(node, finalResponse);
+                node.markUpdated();
+
+                // Try to generate embedding
+                tryGenerateEmbedding(node);
+
+                // Save to graph
+                graph.upsertNode(node);
+
+                callback.onSummaryComplete(finalResponse, node);
+            }
+
+            @Override
+            public void onError(Throwable error) {
+                callback.onError(error);
+            }
+
+            @Override
+            public boolean shouldContinue() {
+                return callback.shouldContinue();
+            }
+
+            @Override
+            public void onThinkingStateChanged(boolean thinking) {
+                callback.onThinkingStateChanged(thinking);
+            }
+        });
+    }
+
+    /**
+     * Make a streaming LLM call.
+     *
+     * @param prompt The prompt to send
+     * @param handler The handler for streaming responses
+     */
+    private void callLLMStreaming(String prompt, LlmApi.LlmResponseHandler handler) {
+        if (provider == null) {
+            handler.onError(new IllegalStateException("No LLM provider available for summarization"));
+            return;
+        }
+
+        try {
+            List<ChatMessage> messages = new ArrayList<>();
+            messages.add(new ChatMessage("system", systemPrompt));
+            messages.add(new ChatMessage("user", prompt));
+
+            // Use streaming API with think-tag filtering
+            ResponseProcessor.StreamingResponseFilter filter = responseProcessor.createStreamingFilter();
+            provider.streamChatCompletion(messages, new LlmApi.LlmResponseHandler() {
+                private boolean wasThinking = false;
+
+                @Override
+                public void onStart() { handler.onStart(); }
+
+                @Override
+                public void onUpdate(String partialResponse) {
+                    String filtered = filter.processChunk(partialResponse);
+                    boolean isThinking = filter.isInsideThinkBlock();
+
+                    // Signal thinking state transitions
+                    if (isThinking && !wasThinking) {
+                        handler.onThinkingStateChanged(true);
+                    } else if (!isThinking && wasThinking) {
+                        handler.onThinkingStateChanged(false);
+                    }
+                    wasThinking = isThinking;
+
+                    if (!isThinking && filtered != null && !filtered.isEmpty()) {
+                        handler.onUpdate(filtered);
+                    }
+                }
+
+                @Override
+                public void onComplete(String fullResponse) {
+                    if (wasThinking) {
+                        handler.onThinkingStateChanged(false);
+                    }
+                    handler.onComplete(filter.getFilteredContent());
+                }
+
+                @Override
+                public void onError(Throwable error) { handler.onError(error); }
+
+                @Override
+                public boolean shouldContinue() { return handler.shouldContinue(); }
+            });
+        } catch (APIProviderException e) {
+            handler.onError(e);
+        }
+    }
+
+    /**
+     * Extract metadata from LLM response and update node.
+     * Common logic shared between summarizeNode() and summarizeNodeStreaming().
+     *
+     * @param node The node to update
+     * @param response The LLM response
+     */
+    private void extractAndUpdateNode(KnowledgeNode node, String response) {
+        if (response == null || response.isEmpty()) {
+            return;
+        }
+
+        node.setLlmSummary(response);
+        node.setConfidence(0.85f);
+
+        String category = ExtractionPrompts.extractCategory(response);
+        if (category != null && !category.isEmpty()) {
+            node.setCategory(category);
+        }
     }
 }

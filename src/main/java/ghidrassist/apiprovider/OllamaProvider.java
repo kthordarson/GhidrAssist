@@ -32,14 +32,15 @@ public class OllamaProvider extends APIProvider implements FunctionCallingProvid
     private static final String OLLAMA_MODELS_ENDPOINT = "api/tags";
     private volatile boolean isCancelled = false;
 
-    public OllamaProvider(String name, String model, Integer maxTokens, String url, String key, boolean disableTlsVerification, Integer timeout) {
-        super(name, ProviderType.OLLAMA, model, maxTokens, url, key, disableTlsVerification, timeout);
+    public OllamaProvider(String name, String model, Integer maxTokens, String url, String key,
+                          boolean disableTlsVerification, boolean bypassProxy, Integer timeout) {
+        super(name, ProviderType.OLLAMA, model, maxTokens, url, key, disableTlsVerification, bypassProxy, timeout);
     }
 
     @Override
     protected OkHttpClient buildClient() {
         try {
-            OkHttpClient.Builder builder = new OkHttpClient.Builder()
+            OkHttpClient.Builder builder = configureClientBuilder(new OkHttpClient.Builder())
                 .connectTimeout(super.timeout)
                 .readTimeout(super.timeout)
                 .writeTimeout(super.timeout)
@@ -160,10 +161,18 @@ public class OllamaProvider extends APIProvider implements FunctionCallingProvid
 
     @Override
     public String createChatCompletionWithFunctionsFullResponse(List<ChatMessage> messages, List<Map<String, Object>> functions) throws APIProviderException {
+        return createChatCompletionWithFunctionsFullResponse(messages, functions, ToolChoiceMode.AUTO);
+    }
+
+    @Override
+    public String createChatCompletionWithFunctionsFullResponse(List<ChatMessage> messages, List<Map<String, Object>> functions,
+                                                                ToolChoiceMode toolChoiceMode) throws APIProviderException {
         JsonObject payload = buildChatCompletionPayload(messages, false);
         
         // Add tools (functions) to the payload
         payload.add("tools", gson.toJsonTree(functions));
+        payload.addProperty("tool_choice",
+            (toolChoiceMode != null ? toolChoiceMode : ToolChoiceMode.AUTO).toOpenAIToolChoice(messages));
 
         // Specify json output
         payload.addProperty("format", "json");
@@ -216,10 +225,7 @@ public class OllamaProvider extends APIProvider implements FunctionCallingProvid
             // Set message content based on what we found
             if (toolCalls != null && toolCalls.size() > 0) {
                 message.add("tool_calls", toolCalls);
-                // Include content if present
-                if (content != null && !content.trim().isEmpty()) {
-                    message.addProperty("content", content);
-                }
+                message.addProperty("content", (content != null && !content.trim().isEmpty()) ? content : "");
             } else {
                 message.addProperty("content", content);
             }
@@ -244,13 +250,18 @@ public class OllamaProvider extends APIProvider implements FunctionCallingProvid
 
     @Override
     public String createChatCompletionWithFunctions(List<ChatMessage> messages, List<Map<String, Object>> functions) throws APIProviderException {
+        return createChatCompletionWithFunctions(messages, functions, ToolChoiceMode.AUTO);
+    }
+
+    @Override
+    public String createChatCompletionWithFunctions(List<ChatMessage> messages, List<Map<String, Object>> functions,
+                                                    ToolChoiceMode toolChoiceMode) throws APIProviderException {
         JsonObject payload = buildChatCompletionPayload(messages, false);
         
         // Add tools (functions) to the payload
         payload.add("tools", gson.toJsonTree(functions));
-
-        // Force tool use - "required" means model must use at least one tool
-        payload.addProperty("tool_choice", "required");
+        payload.addProperty("tool_choice",
+            (toolChoiceMode != null ? toolChoiceMode : ToolChoiceMode.AUTO).toOpenAIToolChoice(messages));
 
         // Specify json output
         payload.add("format", gson.toJsonTree("json"));

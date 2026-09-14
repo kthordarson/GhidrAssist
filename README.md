@@ -115,7 +115,7 @@ https://github.com/user-attachments/assets/bd79474a-c82f-4083-b432-96625fef1387
 * Launch Ghidra -> File -> Install Extension -> Enable GhidrAssist.
 * Load a binary and launch the CodeBrowser.
 * CodeBrowser -> File -> Configure -> Miscellaneous -> Enable GhidrAssist.
-* CodeBrowser -> Tools -> GhidraAssist Settings.
+* CodeBrowser -> Window -> GhidraAssistPlugin.
 * Ensure the RLHF and RAG database paths are appropriate for your environment.
 * Point the API host to your preferred API provider and set the API key.
 * (Optional) In the Analysis Options tab, set the Reasoning Effort level (None/Low/Medium/High) for models that support extended thinking.
@@ -235,7 +235,7 @@ When viewing a function in the Explain tab:
 - **Module Discovery**: Community detection groups related functions automatically
 
 ## Homepage
-https://github.com/jtang613/GhidrAssist
+https://symgraph.ai
 
 
 ## Minimum Version

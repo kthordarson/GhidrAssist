@@ -18,6 +18,28 @@ import java.util.Optional;
  */
 public class ChatHistoryDAO implements MessageRepository, ChatSessionRepository {
 
+    public static class DocumentChatMetadata {
+        private boolean documentChat;
+        private String documentIdentityId;
+        private Integer documentVersion;
+        private String docType;
+        private Long lastSyncedAt;
+        private String sourceSha256;
+
+        public boolean isDocumentChat() { return documentChat; }
+        public void setDocumentChat(boolean documentChat) { this.documentChat = documentChat; }
+        public String getDocumentIdentityId() { return documentIdentityId; }
+        public void setDocumentIdentityId(String documentIdentityId) { this.documentIdentityId = documentIdentityId; }
+        public Integer getDocumentVersion() { return documentVersion; }
+        public void setDocumentVersion(Integer documentVersion) { this.documentVersion = documentVersion; }
+        public String getDocType() { return docType; }
+        public void setDocType(String docType) { this.docType = docType; }
+        public Long getLastSyncedAt() { return lastSyncedAt; }
+        public void setLastSyncedAt(Long lastSyncedAt) { this.lastSyncedAt = lastSyncedAt; }
+        public String getSourceSha256() { return sourceSha256; }
+        public void setSourceSha256(String sourceSha256) { this.sourceSha256 = sourceSha256; }
+    }
+
     private final TransactionManager transactionManager;
 
     public ChatHistoryDAO(TransactionManager transactionManager) {
@@ -174,22 +196,6 @@ public class ChatHistoryDAO implements MessageRepository, ChatSessionRepository 
         return 1;
     }
 
-    @Override
-    public String getLegacyConversation(int sessionId) {
-        String sql = "SELECT conversation FROM GHChatHistory WHERE id = ?";
-
-        try (PreparedStatement pstmt = transactionManager.getConnection().prepareStatement(sql)) {
-            pstmt.setInt(1, sessionId);
-            ResultSet rs = pstmt.executeQuery();
-            if (rs.next()) {
-                return rs.getString("conversation");
-            }
-        } catch (SQLException e) {
-            Msg.error(this, "Failed to get legacy conversation: " + e.getMessage());
-        }
-        return null;
-    }
-
     // ==================== MessageRepository Implementation ====================
 
     @Override
@@ -325,6 +331,99 @@ public class ChatHistoryDAO implements MessageRepository, ChatSessionRepository 
             Msg.error(this, "Failed to delete message: " + e.getMessage());
             return false;
         }
+    }
+
+    public DocumentChatMetadata getDocumentChatMetadata(int sessionId) {
+        String sql = "SELECT is_document_chat, symgraph_document_identity_id, symgraph_document_version, "
+                + "symgraph_doc_type, symgraph_last_synced_at, symgraph_source_sha256 "
+                + "FROM GHDocumentChatMetadata WHERE session_id = ?";
+
+        try (PreparedStatement pstmt = transactionManager.getConnection().prepareStatement(sql)) {
+            pstmt.setInt(1, sessionId);
+            ResultSet rs = pstmt.executeQuery();
+            if (rs.next()) {
+                DocumentChatMetadata metadata = new DocumentChatMetadata();
+                metadata.setDocumentChat(rs.getInt("is_document_chat") != 0);
+                metadata.setDocumentIdentityId(rs.getString("symgraph_document_identity_id"));
+                int version = rs.getInt("symgraph_document_version");
+                metadata.setDocumentVersion(rs.wasNull() ? null : version);
+                metadata.setDocType(rs.getString("symgraph_doc_type"));
+                long syncedAt = rs.getLong("symgraph_last_synced_at");
+                metadata.setLastSyncedAt(rs.wasNull() ? null : syncedAt);
+                metadata.setSourceSha256(rs.getString("symgraph_source_sha256"));
+                return metadata;
+            }
+        } catch (SQLException e) {
+            Msg.error(this, "Failed to get document chat metadata: " + e.getMessage());
+        }
+        return new DocumentChatMetadata();
+    }
+
+    public boolean upsertDocumentChatMetadata(int sessionId, DocumentChatMetadata metadata) {
+        String sql = "INSERT INTO GHDocumentChatMetadata ("
+                + "session_id, is_document_chat, symgraph_document_identity_id, symgraph_document_version, "
+                + "symgraph_doc_type, symgraph_last_synced_at, symgraph_source_sha256"
+                + ") VALUES (?, ?, ?, ?, ?, ?, ?) "
+                + "ON CONFLICT(session_id) DO UPDATE SET "
+                + "is_document_chat = excluded.is_document_chat, "
+                + "symgraph_document_identity_id = excluded.symgraph_document_identity_id, "
+                + "symgraph_document_version = excluded.symgraph_document_version, "
+                + "symgraph_doc_type = excluded.symgraph_doc_type, "
+                + "symgraph_last_synced_at = excluded.symgraph_last_synced_at, "
+                + "symgraph_source_sha256 = excluded.symgraph_source_sha256";
+
+        try (PreparedStatement pstmt = transactionManager.getConnection().prepareStatement(sql)) {
+            pstmt.setInt(1, sessionId);
+            pstmt.setInt(2, metadata != null && metadata.isDocumentChat() ? 1 : 0);
+            if (metadata != null && metadata.getDocumentIdentityId() != null) {
+                pstmt.setString(3, metadata.getDocumentIdentityId());
+            } else {
+                pstmt.setNull(3, Types.VARCHAR);
+            }
+            if (metadata != null && metadata.getDocumentVersion() != null) {
+                pstmt.setInt(4, metadata.getDocumentVersion());
+            } else {
+                pstmt.setNull(4, Types.INTEGER);
+            }
+            if (metadata != null && metadata.getDocType() != null) {
+                pstmt.setString(5, metadata.getDocType());
+            } else {
+                pstmt.setNull(5, Types.VARCHAR);
+            }
+            if (metadata != null && metadata.getLastSyncedAt() != null) {
+                pstmt.setLong(6, metadata.getLastSyncedAt());
+            } else {
+                pstmt.setNull(6, Types.INTEGER);
+            }
+            if (metadata != null && metadata.getSourceSha256() != null) {
+                pstmt.setString(7, metadata.getSourceSha256());
+            } else {
+                pstmt.setNull(7, Types.VARCHAR);
+            }
+            return pstmt.executeUpdate() > 0;
+        } catch (SQLException e) {
+            Msg.error(this, "Failed to save document chat metadata: " + e.getMessage());
+            return false;
+        }
+    }
+
+    public Integer findSessionIdByDocumentIdentity(String programHash, String documentIdentityId) {
+        String sql = "SELECT h.id FROM GHChatHistory h "
+                + "JOIN GHDocumentChatMetadata m ON h.id = m.session_id "
+                + "WHERE h.program_hash = ? AND m.symgraph_document_identity_id = ? "
+                + "ORDER BY h.last_update DESC LIMIT 1";
+
+        try (PreparedStatement pstmt = transactionManager.getConnection().prepareStatement(sql)) {
+            pstmt.setString(1, programHash);
+            pstmt.setString(2, documentIdentityId);
+            ResultSet rs = pstmt.executeQuery();
+            if (rs.next()) {
+                return rs.getInt("id");
+            }
+        } catch (SQLException e) {
+            Msg.error(this, "Failed to find document chat session: " + e.getMessage());
+        }
+        return null;
     }
 
     // ==================== Private Helper Methods ====================

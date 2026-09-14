@@ -9,6 +9,7 @@ os/
 .pydevproject
 ghidrassist_rlhf.db
 ghidrassist_analysis.db
+ghidrassist_chat_artifacts/
 lucene/
 node_modules/
 package.json

@@ -25,6 +25,7 @@ public class AnthropicClaudeCliProviderFactory implements APIProviderFactory {
             config.getUrl(),      // Not used but kept for API consistency
             config.getKey(),      // Not used but kept for API consistency
             config.isDisableTlsVerification(),
+            config.isBypassProxy(),
             config.getTimeout()
         );
     }

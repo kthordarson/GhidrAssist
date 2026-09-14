@@ -22,6 +22,7 @@ public class AzureOpenAIProviderFactory implements APIProviderFactory {
                 config.getUrl(),
                 config.getKey(),
                 config.isDisableTlsVerification(),
+                config.isBypassProxy(),
                 config.getTimeout());
     }
 

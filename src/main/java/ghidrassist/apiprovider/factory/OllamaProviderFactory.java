@@ -22,6 +22,7 @@ public class OllamaProviderFactory implements APIProviderFactory {
             config.getUrl(),
             config.getKey(),
             config.isDisableTlsVerification(),
+            config.isBypassProxy(),
             config.getTimeout()
         );
     }

@@ -16,12 +16,15 @@ public class SemanticAnalysis {
     private final List<String> callers;
     private final List<String> callees;
     private final String community;         // Module/subsystem this belongs to
-    private final String rawCode;           // Cached decompiled code
+    private final String signature;
+    private final String decompiledCode;
+    private final String disassembly;
     private final boolean indexed;          // Whether this function has been indexed
 
     public SemanticAnalysis(String name, long address, String summary, List<String> securityFlags,
                             String category, float confidence, List<String> callers,
-                            List<String> callees, String community, String rawCode, boolean indexed) {
+                            List<String> callees, String community, String signature,
+                            String decompiledCode, String disassembly, boolean indexed) {
         this.name = name;
         this.address = address;
         this.summary = summary;
@@ -31,7 +34,9 @@ public class SemanticAnalysis {
         this.callers = callers;
         this.callees = callees;
         this.community = community;
-        this.rawCode = rawCode;
+        this.signature = signature;
+        this.decompiledCode = decompiledCode;
+        this.disassembly = disassembly;
         this.indexed = indexed;
     }
 
@@ -40,7 +45,7 @@ public class SemanticAnalysis {
      */
     public static SemanticAnalysis notIndexed(String name, long address) {
         return new SemanticAnalysis(name, address, null, List.of(), null, 0.0f,
-                List.of(), List.of(), null, null, false);
+                List.of(), List.of(), null, null, null, null, false);
     }
 
     // Getters
@@ -53,7 +58,10 @@ public class SemanticAnalysis {
     public List<String> getCallers() { return callers; }
     public List<String> getCallees() { return callees; }
     public String getCommunity() { return community; }
-    public String getRawCode() { return rawCode; }
+    public String getSignature() { return signature; }
+    public String getDecompiledCode() { return decompiledCode; }
+    public String getDisassembly() { return disassembly; }
+    public String getRawCode() { return decompiledCode != null ? decompiledCode : disassembly; }
     public boolean isIndexed() { return indexed; }
 
     /**
@@ -67,7 +75,8 @@ public class SemanticAnalysis {
      * Check if we have any useful data (structure or semantic).
      */
     public boolean hasData() {
-        return rawCode != null || (callers != null && !callers.isEmpty()) ||
+        return decompiledCode != null || disassembly != null ||
+               (callers != null && !callers.isEmpty()) ||
                (callees != null && !callees.isEmpty());
     }
 
@@ -119,15 +128,30 @@ public class SemanticAnalysis {
                 sb.append("  \"community\": \"").append(community).append("\",\n");
             }
 
-            // Raw code - always show if available
-            if (rawCode != null) {
-                // Truncate raw code for tool output
-                String truncated = rawCode.length() > 2000
-                    ? rawCode.substring(0, 2000) + "\n// ... (truncated)"
-                    : rawCode;
-                sb.append("  \"raw_code\": \"").append(escapeJson(truncated)).append("\"\n");
+            if (signature != null) {
+                sb.append("  \"signature\": \"").append(escapeJson(signature)).append("\",\n");
             } else {
-                sb.append("  \"raw_code\": null\n");
+                sb.append("  \"signature\": null,\n");
+            }
+
+            if (decompiledCode != null) {
+                String truncated = decompiledCode.length() > 2000
+                    ? decompiledCode.substring(0, 2000) + "\n// ... (truncated)"
+                    : decompiledCode;
+                sb.append("  \"decompiled_code\": \"").append(escapeJson(truncated)).append("\",\n");
+                sb.append("  \"raw_code\": \"").append(escapeJson(truncated)).append("\",\n");
+            } else {
+                sb.append("  \"decompiled_code\": null,\n");
+                sb.append("  \"raw_code\": null,\n");
+            }
+
+            if (disassembly != null) {
+                String truncated = disassembly.length() > 2000
+                    ? disassembly.substring(0, 2000) + "\n; ... (truncated)"
+                    : disassembly;
+                sb.append("  \"disassembly\": \"").append(escapeJson(truncated)).append("\"\n");
+            } else {
+                sb.append("  \"disassembly\": null\n");
             }
         } else {
             sb.append("  \"message\": \"Function not found in graph. Lazy indexing may have failed.\"\n");

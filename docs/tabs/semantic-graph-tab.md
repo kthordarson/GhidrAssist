@@ -32,9 +32,6 @@ Interactive graph visualization:
 - Edges are call relationships
 - N-hop depth controls exploration
 
-![Visual Graph](../screenshots/semantic-graph-visual-explore.png)
-<!-- SCREENSHOT: Visual Graph view with nodes and edges, one node selected -->
-
 ### Search
 
 Full-text search across summaries and annotations:
@@ -79,3 +76,4 @@ The status line shows:
 
 - [Semantic Graph Workflow](../workflows/semantic-graph-workflow.md)
 - [Query Tab](query-tab.md)
+- [SymGraph Tab](symgraph-tab.md)

@@ -3,6 +3,11 @@ package ghidrassist;
 import ghidrassist.apiprovider.APIProviderConfig;
 import ghidrassist.apiprovider.ChatMessage;
 import ghidrassist.apiprovider.ReasoningConfig;
+import ghidrassist.apiprovider.ToolChoiceMode;
+import ghidrassist.context.CharacterBasedTokenCounter;
+import ghidrassist.context.ContextWindowConfig;
+import ghidrassist.context.ContextWindowListener;
+import ghidrassist.context.ContextWindowManager;
 import ghidrassist.core.ConversationalToolHandler;
 import ghidrassist.core.LlmApiClient;
 import ghidrassist.core.LlmErrorHandler;
@@ -26,6 +31,7 @@ public class LlmApi {
     private final LlmTaskExecutor taskExecutor;
     private final LlmErrorHandler errorHandler;
     private volatile ConversationalToolHandler activeConversationalHandler;
+    private volatile ContextWindowListener contextWindowListener;
     
     public LlmApi(APIProviderConfig config, GhidrAssistPlugin plugin) {
         this.apiClient = new LlmApiClient(config, plugin);
@@ -94,6 +100,13 @@ public class LlmApi {
      */
     public void sendConversationalToolRequest(String prompt, List<Map<String, Object>> functions,
             LlmResponseHandler responseHandler, int maxToolRounds, ToolRegistry toolRegistry) {
+        sendConversationalToolRequest(prompt, functions, responseHandler, maxToolRounds, toolRegistry,
+            ToolChoiceMode.AUTO);
+    }
+
+    public void sendConversationalToolRequest(String prompt, List<Map<String, Object>> functions,
+            LlmResponseHandler responseHandler, int maxToolRounds, ToolRegistry toolRegistry,
+            ToolChoiceMode toolChoiceMode) {
         if (!apiClient.isProviderAvailable()) {
             errorHandler.handleError(
                 new IllegalStateException("LLM provider is not initialized."),
@@ -108,10 +121,14 @@ public class LlmApi {
             activeConversationalHandler = null;
         };
 
+        // Construct ContextWindowManager for proper context management
+        ContextWindowManager cwm = new ContextWindowManager(
+            new ContextWindowConfig(), new CharacterBasedTokenCounter(), this, contextWindowListener);
+
         // Create enhanced response handler for conversational tool calling
         ConversationalToolHandler toolHandler = new ConversationalToolHandler(
             apiClient, functions, responseProcessor, responseHandler, errorHandler, onCompletion,
-            maxToolRounds, toolRegistry);
+            maxToolRounds, toolRegistry, cwm, toolChoiceMode);
 
         // Store reference for cancellation
         activeConversationalHandler = toolHandler;
@@ -138,6 +155,18 @@ public class LlmApi {
             LlmResponseHandler responseHandler,
             int maxToolRounds,
             ToolRegistry toolRegistry) {
+        sendConversationalToolRequestWithHistory(existingHistory, newPrompt, functions,
+            responseHandler, maxToolRounds, toolRegistry, ToolChoiceMode.AUTO);
+    }
+
+    public void sendConversationalToolRequestWithHistory(
+            List<ChatMessage> existingHistory,
+            String newPrompt,
+            List<Map<String, Object>> functions,
+            LlmResponseHandler responseHandler,
+            int maxToolRounds,
+            ToolRegistry toolRegistry,
+            ToolChoiceMode toolChoiceMode) {
 
         if (!apiClient.isProviderAvailable()) {
             errorHandler.handleError(
@@ -153,10 +182,14 @@ public class LlmApi {
             activeConversationalHandler = null;
         };
 
+        // Construct ContextWindowManager for proper context management
+        ContextWindowManager cwm = new ContextWindowManager(
+            new ContextWindowConfig(), new CharacterBasedTokenCounter(), this, contextWindowListener);
+
         // Create enhanced response handler for conversational tool calling
         ConversationalToolHandler toolHandler = new ConversationalToolHandler(
             apiClient, functions, responseProcessor, responseHandler, errorHandler, onCompletion,
-            maxToolRounds, toolRegistry);
+            maxToolRounds, toolRegistry, cwm, toolChoiceMode);
 
         // Store reference for cancellation
         activeConversationalHandler = toolHandler;
@@ -242,6 +275,18 @@ public class LlmApi {
             apiClient.getProviderModel());
     }
 
+    public String getProviderName() {
+        return apiClient.getProviderName();
+    }
+
+    public String getProviderModel() {
+        return apiClient.getProviderModel();
+    }
+
+    public void setContextWindowListener(ContextWindowListener contextWindowListener) {
+        this.contextWindowListener = contextWindowListener;
+    }
+
     /**
      * Set the reasoning configuration for this LLM instance.
      * This affects how the provider constructs requests with thinking/reasoning parameters.
@@ -282,5 +327,11 @@ public class LlmApi {
         default boolean shouldContinue() {
             return true;
         }
+
+        /** Called when tool calls have been executed in the current round. */
+        default void onToolsExecuted(int toolCount) {}
+
+        /** Called when the LLM enters or exits a thinking block. */
+        default void onThinkingStateChanged(boolean thinking) {}
     }
 }

@@ -46,8 +46,8 @@ public class LiteLLMProvider extends OpenAIPlatformApiProvider {
     private volatile boolean isCancelled = false;
 
     public LiteLLMProvider(String name, String model, Integer maxTokens, String url,
-                           String key, boolean disableTlsVerification, Integer timeout) {
-        super(name, model, maxTokens, url, key, disableTlsVerification, timeout);
+                           String key, boolean disableTlsVerification, boolean bypassProxy, Integer timeout) {
+        super(name, model, maxTokens, url, key, disableTlsVerification, bypassProxy, timeout);
 
         // Override the type to LITELLM
         this.type = ProviderType.LITELLM;
@@ -75,6 +75,7 @@ public class LiteLLMProvider extends OpenAIPlatformApiProvider {
             config.getUrl(),
             config.getKey(),
             config.isDisableTlsVerification(),
+            config.isBypassProxy(),
             config.getTimeout()
         );
     }
@@ -391,6 +392,7 @@ public class LiteLLMProvider extends OpenAIPlatformApiProvider {
 
                     BufferedSource source = responseBody.source();
                     StringBuilder textBuilder = new StringBuilder();
+                    StringBuilder reasoningBuilder = new StringBuilder();
                     java.util.Map<Integer, ToolCallAccumulator> toolCallsMap = new java.util.HashMap<>();
                     String finishReason = "stop";
 
@@ -415,7 +417,8 @@ public class LiteLLMProvider extends OpenAIPlatformApiProvider {
                                                 toolCalls.add(new ToolCall(acc.id, acc.name, args));
                                             });
 
-                                    handler.onStreamComplete(finishReason, textBuilder.toString(), toolCalls);
+                                    handler.onStreamComplete(finishReason, textBuilder.toString(),
+                                        reasoningBuilder.toString(), toolCalls);
                                     return;
                                 }
 
@@ -435,6 +438,11 @@ public class LiteLLMProvider extends OpenAIPlatformApiProvider {
                                                     String content = delta.get("content").getAsString();
                                                     textBuilder.append(content);
                                                     handler.onTextUpdate(content);
+                                                }
+
+                                                // Capture reasoning_content (DeepSeek thinking mode)
+                                                if (delta.has("reasoning_content") && !delta.get("reasoning_content").isJsonNull()) {
+                                                    reasoningBuilder.append(delta.get("reasoning_content").getAsString());
                                                 }
 
                                                 // Buffer tool calls
@@ -736,8 +744,14 @@ public class LiteLLMProvider extends OpenAIPlatformApiProvider {
     @Override
     public String createChatCompletionWithFunctions(List<ChatMessage> messages,
                                                      List<Map<String, Object>> functions) throws APIProviderException {
-        // Build payload WITHOUT thinking enabled (tool_choice will be "required")
-        JsonObject payload = buildToolCallPayload(messages, functions, true);
+        return createChatCompletionWithFunctions(messages, functions, ToolChoiceMode.AUTO);
+    }
+
+    @Override
+    public String createChatCompletionWithFunctions(List<ChatMessage> messages,
+                                                     List<Map<String, Object>> functions,
+                                                     ToolChoiceMode toolChoiceMode) throws APIProviderException {
+        JsonObject payload = buildToolCallPayload(messages, functions, toolChoiceMode);
 
         Request request = new Request.Builder()
                 .url(url + "chat/completions")
@@ -758,8 +772,14 @@ public class LiteLLMProvider extends OpenAIPlatformApiProvider {
     @Override
     public String createChatCompletionWithFunctionsFullResponse(List<ChatMessage> messages,
                                                                   List<Map<String, Object>> functions) throws APIProviderException {
-        // Build payload WITHOUT thinking enabled
-        JsonObject payload = buildToolCallPayload(messages, functions, false);
+        return createChatCompletionWithFunctionsFullResponse(messages, functions, ToolChoiceMode.AUTO);
+    }
+
+    @Override
+    public String createChatCompletionWithFunctionsFullResponse(List<ChatMessage> messages,
+                                                                  List<Map<String, Object>> functions,
+                                                                  ToolChoiceMode toolChoiceMode) throws APIProviderException {
+        JsonObject payload = buildToolCallPayload(messages, functions, toolChoiceMode);
 
         Request request = new Request.Builder()
                 .url(url + "chat/completions")
@@ -775,23 +795,22 @@ public class LiteLLMProvider extends OpenAIPlatformApiProvider {
 
     /**
      * Build payload for tool/function calls.
-     * CRITICAL: Thinking must be DISABLED when tool_choice forces tool use.
+     * Function-calling payload builder.
      *
      * @param messages Chat messages
      * @param functions Tool/function definitions
-     * @param forceToolUse If true, set tool_choice to "required"
+     * @param toolChoiceMode Shared tool-choice policy
      */
     private JsonObject buildToolCallPayload(List<ChatMessage> messages,
                                              List<Map<String, Object>> functions,
-                                             boolean forceToolUse) {
+                                             ToolChoiceMode toolChoiceMode) {
         JsonObject payload = new JsonObject();
         payload.addProperty("model", super.getModel());
         payload.addProperty("max_tokens", super.getMaxTokens());
         payload.addProperty("stream", false);
 
-        // CRITICAL: Do NOT include reasoning/thinking when using tool_choice
-        // Bedrock error: "Thinking may not be enabled when tool_choice forces tool use."
-        // So we intentionally skip all thinking-related configuration here
+        // Keep thinking disabled on the function-calling path to avoid provider-specific
+        // incompatibilities when tool choice is present.
 
         // Build messages array - use standard format (no thinking blocks)
         JsonArray messagesArray = new JsonArray();
@@ -809,10 +828,8 @@ public class LiteLLMProvider extends OpenAIPlatformApiProvider {
             payload.add("tools", new JsonArray());
         }
 
-        // Set tool_choice if forcing tool use
-        if (forceToolUse) {
-            payload.addProperty("tool_choice", "required");
-        }
+        payload.addProperty("tool_choice",
+            (toolChoiceMode != null ? toolChoiceMode : ToolChoiceMode.AUTO).toOpenAIToolChoice(messages));
 
         Msg.debug(this, "LiteLLM tool call payload (thinking disabled): " + payload.toString());
         return payload;

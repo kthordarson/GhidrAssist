@@ -31,6 +31,7 @@ public class NativeToolManager implements ToolProvider {
     private final List<ToolProvider> nativeProviders = new ArrayList<>();
     private final GhidraToolProvider ghidraToolProvider;
     private final ActionToolProvider actionToolProvider;
+    private final DocumentToolProvider documentToolProvider;
     private Program currentProgram;
     private Address currentAddress;
 
@@ -42,11 +43,13 @@ public class NativeToolManager implements ToolProvider {
         // Create providers that need address context
         this.ghidraToolProvider = new GhidraToolProvider();
         this.actionToolProvider = new ActionToolProvider();
+        this.documentToolProvider = new DocumentToolProvider();
 
         // Register native tool providers
         nativeProviders.add(ghidraToolProvider);
         nativeProviders.add(new SemanticToolProvider(analysisDB));
         nativeProviders.add(actionToolProvider);
+        nativeProviders.add(documentToolProvider);
 
         Msg.info(this, "NativeToolManager initialized with " + nativeProviders.size() + " providers");
     }
@@ -135,6 +138,14 @@ public class NativeToolManager implements ToolProvider {
      */
     public Address getCurrentAddress() {
         return currentAddress;
+    }
+
+    /**
+     * Set the handler for document chat creation.
+     * @param handler The handler to use for creating document chats
+     */
+    public void setDocumentChatHandler(DocumentToolProvider.DocumentChatHandler handler) {
+        documentToolProvider.setHandler(handler);
     }
 
     /**

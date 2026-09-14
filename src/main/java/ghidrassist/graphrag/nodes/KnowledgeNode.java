@@ -39,6 +39,9 @@ public class KnowledgeNode {
     // Content fields
     // ========================================
 
+    private String signature;             // Reverse-engineering byte signature
+    private String decompiledCode;        // Decompiled / high-level code
+    private String disassembly;           // Instruction listing
     private String rawContent;            // Decompiled code / assembly / description
     private String llmSummary;            // Semantic explanation from LLM
     private float confidence;             // Summary confidence 0.0 - 1.0
@@ -66,6 +69,7 @@ public class KnowledgeNode {
     private List<String> filePaths;       // Detected file paths in strings
     private List<String> domains;         // Detected domain names in strings
     private List<String> registryKeys;    // Detected registry keys in strings
+    private String category;              // Semantic category (error_handling, initialization, etc.)
     private String activityProfile;       // Computed activity profile (NETWORK_CLIENT, FILE_WRITER, etc.)
     private String riskLevel;             // Computed risk level (LOW, MEDIUM, HIGH)
 
@@ -130,7 +134,7 @@ public class KnowledgeNode {
      * External functions use null address to avoid unique index conflicts.
      */
     public static KnowledgeNode createExternalFunction(String binaryId, String name) {
-        KnowledgeNode node = new KnowledgeNode(NodeType.FUNCTION, binaryId);
+        KnowledgeNode node = new KnowledgeNode(NodeType.EXTERNAL, binaryId);
         node.setAddress(null);  // External functions have no address
         node.setName(name);
         return node;
@@ -311,11 +315,44 @@ public class KnowledgeNode {
     }
 
     public String getRawContent() {
-        return rawContent;
+        if (rawContent != null && !rawContent.isEmpty()) {
+            return rawContent;
+        }
+        return decompiledCode != null ? decompiledCode : disassembly;
     }
 
     public void setRawContent(String rawContent) {
         this.rawContent = rawContent;
+        if ((this.decompiledCode == null || this.decompiledCode.isEmpty()) && rawContent != null) {
+            this.decompiledCode = rawContent;
+        }
+    }
+
+    public String getSignature() {
+        return signature;
+    }
+
+    public void setSignature(String signature) {
+        this.signature = signature;
+    }
+
+    public String getDecompiledCode() {
+        return decompiledCode != null ? decompiledCode : rawContent;
+    }
+
+    public void setDecompiledCode(String decompiledCode) {
+        this.decompiledCode = decompiledCode;
+        if ((this.rawContent == null || this.rawContent.isEmpty()) && decompiledCode != null) {
+            this.rawContent = decompiledCode;
+        }
+    }
+
+    public String getDisassembly() {
+        return disassembly;
+    }
+
+    public void setDisassembly(String disassembly) {
+        this.disassembly = disassembly;
     }
 
     public String getLlmSummary() {
@@ -349,6 +386,7 @@ public class KnowledgeNode {
 
     public void setSecurityFlags(List<String> securityFlags) {
         this.securityFlags = securityFlags != null ? new ArrayList<>(securityFlags) : new ArrayList<>();
+        normalizeLegacySecurityFlags();
     }
 
     public int getAnalysisDepth() {
@@ -451,6 +489,18 @@ public class KnowledgeNode {
         this.registryKeys = registryKeys != null ? new ArrayList<>(registryKeys) : new ArrayList<>();
     }
 
+    public String getCategory() {
+        return category;
+    }
+
+    public void setCategory(String category) {
+        if (category == null || category.trim().isEmpty()) {
+            this.category = null;
+            return;
+        }
+        this.category = category.trim().toLowerCase().replace(" ", "_");
+    }
+
     public String getActivityProfile() {
         return activityProfile;
     }
@@ -511,6 +561,32 @@ public class KnowledgeNode {
 
     public String serializeNetworkAPIs() {
         return serializeStringList(networkAPIs);
+    }
+
+    private void normalizeLegacySecurityFlags() {
+        if (securityFlags == null) {
+            securityFlags = new ArrayList<>();
+            return;
+        }
+
+        List<String> filtered = new ArrayList<>();
+        for (String flag : securityFlags) {
+            if (flag == null) {
+                continue;
+            }
+            String trimmed = flag.trim();
+            if (trimmed.isEmpty() || "LLM_FLAGGED".equals(trimmed)) {
+                continue;
+            }
+            if (trimmed.startsWith("CATEGORY_")) {
+                if (category == null || category.isEmpty()) {
+                    setCategory(trimmed.substring("CATEGORY_".length()));
+                }
+                continue;
+            }
+            filtered.add(trimmed);
+        }
+        securityFlags = filtered;
     }
 
     public String serializeFileIOAPIs() {

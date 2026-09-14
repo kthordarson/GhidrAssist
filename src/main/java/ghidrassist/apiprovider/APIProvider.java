@@ -2,6 +2,7 @@ package ghidrassist.apiprovider;
 
 import java.io.IOException;
 import java.net.ConnectException;
+import java.net.Proxy;
 import java.net.SocketTimeoutException;
 import java.net.UnknownHostException;
 import java.time.Duration;
@@ -23,15 +24,17 @@ import okhttp3.Response;
 public abstract class APIProvider implements ChatProvider {
     public enum ProviderType {
         ANTHROPIC_CLAUDE_CLI,
-        ANTHROPIC_OAUTH,
         ANTHROPIC_PLATFORM_API,
         AZURE_OPENAI,
+        GEMINI_OAUTH,
+        GEMINI_PLATFORM_API,
         LITELLM,
         LMSTUDIO,
         OLLAMA,
         OPENAI_OAUTH,
         OPENAI_PLATFORM_API,
-        OPENWEBUI
+        OPENWEBUI,
+        XAI_PLATFORM_API
     }
 
     protected String name;
@@ -40,6 +43,7 @@ public abstract class APIProvider implements ChatProvider {
     protected String url;
     protected String key;
     protected boolean disableTlsVerification;
+    protected boolean bypassProxy;
     protected ProviderType type;
     protected OkHttpClient client;
     protected Duration timeout;
@@ -47,15 +51,17 @@ public abstract class APIProvider implements ChatProvider {
     protected ReasoningConfig reasoningConfig;
 
     public APIProvider(String name, ProviderType type, String model, Integer maxTokens,
-                      String url, String key, boolean disableTlsVerification, Integer timeout2) {
+                      String url, String key, boolean disableTlsVerification, boolean bypassProxy, Integer timeout2) {
         this.name = name;
         this.type = type;
         this.model = model;
         this.maxTokens = maxTokens;
-        this.url = url.endsWith("/") ? url : url + "/";
+        String normalizedUrl = url != null ? url : "";
+        this.url = normalizedUrl.endsWith("/") ? normalizedUrl : normalizedUrl + "/";
         this.key = key;
         this.disableTlsVerification = disableTlsVerification;
-        this.timeout = Duration.ofSeconds(timeout2);
+        this.bypassProxy = bypassProxy;
+        this.timeout = Duration.ofSeconds(timeout2 != null ? timeout2 : 90);
         this.retryHandler = new RetryHandler(50, this);
         this.reasoningConfig = new ReasoningConfig(); // Default to NONE
         this.client = buildClient();
@@ -69,6 +75,7 @@ public abstract class APIProvider implements ChatProvider {
     public String getUrl() { return url; }
     public String getKey() { return key; }
     public boolean isDisableTlsVerification() { return disableTlsVerification; }
+    public boolean isBypassProxy() { return bypassProxy; }
 
     // Reasoning configuration
     public ReasoningConfig getReasoningConfig() {
@@ -93,8 +100,41 @@ public abstract class APIProvider implements ChatProvider {
     public abstract String createChatCompletionWithFunctionsFullResponse(List<ChatMessage> messages, List<Map<String, Object>> functions) throws APIProviderException;
     public abstract List<String> getAvailableModels() throws APIProviderException;
     public abstract void getEmbeddingsAsync(String text, EmbeddingCallback callback);
-	public void setTimeout(Integer timeout2) { this.timeout = Duration.ofSeconds(timeout2); }
-	public Integer getTimeout() { return this.timeout.toSecondsPart(); }
+	public void setTimeout(Integer timeout2) { this.timeout = Duration.ofSeconds(timeout2 != null ? timeout2 : 90); }
+	public Integer getTimeout() { return Math.toIntExact(this.timeout.getSeconds()); }
+
+    /**
+     * Allows providers to prepare shared state before concurrent requests fan out.
+     */
+    public void prepareForConcurrentRequests() throws APIProviderException {
+        // Default no-op.
+    }
+
+    public String createChatCompletionWithFunctions(List<ChatMessage> messages,
+                                                    List<Map<String, Object>> functions,
+                                                    ToolChoiceMode toolChoiceMode) throws APIProviderException {
+        return createChatCompletionWithFunctions(messages, functions);
+    }
+
+    public String createChatCompletionWithFunctionsFullResponse(List<ChatMessage> messages,
+                                                                List<Map<String, Object>> functions,
+                                                                ToolChoiceMode toolChoiceMode) throws APIProviderException {
+        return createChatCompletionWithFunctionsFullResponse(messages, functions);
+    }
+
+    public void testConnection() throws APIProviderException {
+        List<ChatMessage> messages = new java.util.ArrayList<>();
+        messages.add(new ChatMessage(ChatMessage.ChatMessageRole.USER,
+            "Test message. Please respond with 'OK'."));
+        createChatCompletion(messages);
+    }
+
+    protected OkHttpClient.Builder configureClientBuilder(OkHttpClient.Builder builder) {
+        if (bypassProxy) {
+            builder.proxy(Proxy.NO_PROXY);
+        }
+        return builder;
+    }
 
     
     public double[] getEmbeddings(String text) throws APIProviderException {
@@ -140,6 +180,27 @@ public abstract class APIProvider implements ChatProvider {
      * Handle network-related exceptions and convert to appropriate APIProviderException
      */
     protected APIProviderException handleNetworkError(Exception e, String operation) {
+        String message = e.getMessage();
+        String lowerMessage = message != null ? message.toLowerCase() : "";
+
+        if (e instanceof IOException && lowerMessage.contains("token refresh failed")) {
+            String apiErrorCode = classifyOAuthRefreshFailure(lowerMessage);
+            String authMessage = message != null ? message : "OAuth token refresh failed";
+            if (requiresOAuthReauthentication(apiErrorCode) &&
+                !lowerMessage.contains("re-authentication required") &&
+                !lowerMessage.contains("re-authenticate") &&
+                !lowerMessage.contains("reauthenticate")) {
+                authMessage += " Re-authentication required.";
+            }
+            return new AuthenticationException(
+                name,
+                operation,
+                lowerMessage.contains("401") ? 401 : -1,
+                apiErrorCode,
+                authMessage
+            );
+        }
+
         if (e instanceof SocketTimeoutException) {
             return new NetworkException(name, operation, NetworkException.NetworkErrorType.TIMEOUT, e);
         } else if (e instanceof SSLException) {
@@ -148,13 +209,43 @@ public abstract class APIProvider implements ChatProvider {
             return new NetworkException(name, operation, NetworkException.NetworkErrorType.CONNECTION_FAILED, e);
         } else if (e instanceof UnknownHostException) {
             return new NetworkException(name, operation, NetworkException.NetworkErrorType.DNS_ERROR, e);
-        } else if (e instanceof IOException && e.getMessage() != null && 
-                   e.getMessage().toLowerCase().contains("connection")) {
+        } else if (e instanceof IOException && lowerMessage.contains("connection")) {
             return new NetworkException(name, operation, NetworkException.NetworkErrorType.CONNECTION_LOST, e);
         }
         
         // Default network error
-        return new NetworkException(name, operation, "Network error: " + e.getMessage());
+        return new NetworkException(name, operation, "Network error: " + message);
+    }
+
+    private String classifyOAuthRefreshFailure(String lowerMessage) {
+        if (lowerMessage.contains("refresh_token_reused") ||
+            lowerMessage.contains("refresh token has already been used")) {
+            return "refresh_token_reused";
+        }
+        if (lowerMessage.contains("refresh_token_expired") ||
+            lowerMessage.contains("refresh token has expired") ||
+            lowerMessage.contains("expired refresh token")) {
+            return "refresh_token_expired";
+        }
+        if (lowerMessage.contains("refresh_token_revoked") ||
+            lowerMessage.contains("refresh token has been revoked") ||
+            lowerMessage.contains("refresh token revoked")) {
+            return "refresh_token_revoked";
+        }
+        if (lowerMessage.contains("refresh_token_invalid") ||
+            lowerMessage.contains("invalid refresh token") ||
+            lowerMessage.contains("refresh token is invalid") ||
+            lowerMessage.contains("invalid_grant")) {
+            return "refresh_token_invalid";
+        }
+        return null;
+    }
+
+    private boolean requiresOAuthReauthentication(String apiErrorCode) {
+        return "refresh_token_reused".equals(apiErrorCode) ||
+            "refresh_token_expired".equals(apiErrorCode) ||
+            "refresh_token_revoked".equals(apiErrorCode) ||
+            "refresh_token_invalid".equals(apiErrorCode);
     }
     
     /**

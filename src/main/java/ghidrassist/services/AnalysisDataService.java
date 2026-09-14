@@ -18,49 +18,64 @@ public class AnalysisDataService {
         this.plugin = plugin;
         this.analysisDB = new AnalysisDB();
     }
+
+    private String getCurrentProgramHash() {
+        if (plugin.getCurrentProgram() == null) {
+            return null;
+        }
+
+        String programHash = plugin.getCurrentProgram().getExecutableSHA256();
+        if (programHash == null || programHash.isBlank()) {
+            return null;
+        }
+        return programHash;
+    }
     
     /**
      * Save context for the current program
      */
     public void saveContext(String context) {
-        if (plugin.getCurrentProgram() == null) {
-            throw new IllegalStateException("No active program to save context for.");
+        String programHash = getCurrentProgramHash();
+        if (programHash == null) {
+            throw new IllegalStateException("No active program hash available to save context for.");
         }
-        
-        String programHash = plugin.getCurrentProgram().getExecutableSHA256();
+
         analysisDB.upsertContext(programHash, context);
     }
     
     /**
-     * Get context for the current program
+     * Get context for the current program.
+     * If no context is stored (or stored as empty), populates with the default and saves it.
      */
     public String getContext() {
-        if (plugin.getCurrentProgram() == null) {
+        String programHash = getCurrentProgramHash();
+        if (programHash == null) {
             return getDefaultContext();
         }
-        
-        String programHash = plugin.getCurrentProgram().getExecutableSHA256();
+
         String context = analysisDB.getContext(programHash);
-        
-        if (context == null) {
-            return getDefaultContext();
+
+        if (context == null || context.trim().isEmpty()) {
+            String defaultContext = getDefaultContext();
+            analysisDB.upsertContext(programHash, defaultContext);
+            return defaultContext;
         }
-        
+
         return context;
     }
     
     /**
-     * Revert context to default for the current program
+     * Revert context to default for the current program.
+     * Saves the default to the database so it persists.
      */
     public String revertToDefaultContext() {
         String defaultContext = getDefaultContext();
-        
-        if (plugin.getCurrentProgram() != null) {
-            // Clear custom context, will fall back to default
-            String programHash = plugin.getCurrentProgram().getExecutableSHA256();
-            analysisDB.upsertContext(programHash, null);
+
+        String programHash = getCurrentProgramHash();
+        if (programHash != null) {
+            analysisDB.upsertContext(programHash, defaultContext);
         }
-        
+
         return defaultContext;
     }
     
@@ -68,11 +83,11 @@ public class AnalysisDataService {
      * Check if current program has custom context
      */
     public boolean hasCustomContext() {
-        if (plugin.getCurrentProgram() == null) {
+        String programHash = getCurrentProgramHash();
+        if (programHash == null) {
             return false;
         }
-        
-        String programHash = plugin.getCurrentProgram().getExecutableSHA256();
+
         String context = analysisDB.getContext(programHash);
         return context != null && !context.equals(getDefaultContext());
     }
@@ -94,11 +109,11 @@ public class AnalysisDataService {
      * Save reasoning effort for the current program
      */
     public void saveReasoningEffort(String reasoningEffort) {
-        if (plugin.getCurrentProgram() == null) {
-            throw new IllegalStateException("No active program to save reasoning effort for.");
+        String programHash = getCurrentProgramHash();
+        if (programHash == null) {
+            throw new IllegalStateException("No active program hash available to save reasoning effort for.");
         }
 
-        String programHash = plugin.getCurrentProgram().getExecutableSHA256();
         analysisDB.upsertReasoningEffort(programHash, reasoningEffort);
     }
 
@@ -106,11 +121,11 @@ public class AnalysisDataService {
      * Get reasoning effort for the current program
      */
     public String getReasoningEffort() {
-        if (plugin.getCurrentProgram() == null) {
+        String programHash = getCurrentProgramHash();
+        if (programHash == null) {
             return "none"; // Default when no program loaded
         }
 
-        String programHash = plugin.getCurrentProgram().getExecutableSHA256();
         String effort = analysisDB.getReasoningEffort(programHash);
         return effort != null ? effort : "none";
     }
@@ -119,11 +134,11 @@ public class AnalysisDataService {
      * Save max tool calls per iteration for the current program
      */
     public void saveMaxToolCalls(int maxToolCalls) {
-        if (plugin.getCurrentProgram() == null) {
-            throw new IllegalStateException("No active program to save max tool calls for.");
+        String programHash = getCurrentProgramHash();
+        if (programHash == null) {
+            throw new IllegalStateException("No active program hash available to save max tool calls for.");
         }
 
-        String programHash = plugin.getCurrentProgram().getExecutableSHA256();
         analysisDB.upsertMaxToolCalls(programHash, maxToolCalls);
     }
 
@@ -131,11 +146,11 @@ public class AnalysisDataService {
      * Get max tool calls per iteration for the current program
      */
     public int getMaxToolCalls() {
-        if (plugin.getCurrentProgram() == null) {
+        String programHash = getCurrentProgramHash();
+        if (programHash == null) {
             return 10; // Default when no program loaded
         }
 
-        String programHash = plugin.getCurrentProgram().getExecutableSHA256();
         return analysisDB.getMaxToolCalls(programHash);
     }
 

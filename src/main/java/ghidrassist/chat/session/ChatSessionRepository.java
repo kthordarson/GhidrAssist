@@ -83,12 +83,4 @@ public interface ChatSessionRepository {
      */
     int getNextSessionNumber(String programHash);
 
-    /**
-     * Get the legacy conversation blob for a session.
-     * Used for backward compatibility during migration.
-     *
-     * @param sessionId The session ID
-     * @return The conversation blob, or null if not found
-     */
-    String getLegacyConversation(int sessionId);
 }

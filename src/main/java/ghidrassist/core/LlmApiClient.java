@@ -6,6 +6,7 @@ import ghidrassist.LlmApi;
 import ghidrassist.apiprovider.APIProvider;
 import ghidrassist.apiprovider.APIProviderConfig;
 import ghidrassist.apiprovider.ChatMessage;
+import ghidrassist.apiprovider.ToolChoiceMode;
 import ghidrassist.apiprovider.exceptions.APIProviderException;
 import ghidrassist.graphrag.GraphRAGService;
 
@@ -30,7 +31,12 @@ public class LlmApiClient {
             + "You always respond to queries in a structured format using Markdown styling for headings and lists. \n"
             + "You format code blocks using back-tick code-fencing.\n";
             
-    private final String FUNCTION_SYSTEM_PROMPT =
+    private final String OPTIONAL_TOOL_SYSTEM_PROMPT =
+            "You are a professional software reverse engineer. "
+            + "You may use the provided tools when they help gather precise information. "
+            + "If the answer is already clear from context, respond directly without unnecessary tool calls.";
+
+    private final String REQUIRED_TOOL_SYSTEM_PROMPT =
             "You are a professional software reverse engineer. "
             + "You MUST use the provided tools to gather information, then present the results clearly to the user. "
             + "If multiple suggestions are appropriate, make multiple tool calls.";
@@ -39,12 +45,6 @@ public class LlmApiClient {
         this.provider = config.createProvider();
         this.analysisDB = new AnalysisDB();
         this.plugin = plugin;
-
-        // Get the global API timeout and set it if the provider doesn't have one
-        if (provider != null && provider.getTimeout() == null) {
-            Integer timeout = GhidrAssistPlugin.getGlobalApiTimeout();
-            provider.setTimeout(timeout);
-        }
 
         // Initialize GraphRAGService with LLM provider for background semantic analysis
         initializeGraphRAGService();
@@ -114,13 +114,20 @@ public class LlmApiClient {
      * Create messages for function calling
      */
     public List<ChatMessage> createFunctionMessages(String prompt) {
+        return createFunctionMessages(prompt, ToolChoiceMode.AUTO);
+    }
+
+    public List<ChatMessage> createFunctionMessages(String prompt, ToolChoiceMode toolChoiceMode) {
         String systemRole = ChatMessage.ChatMessageRole.SYSTEM;
         if (isO1OrO3Model()) {
             systemRole = ChatMessage.ChatMessageRole.USER;
         }
 
         List<ChatMessage> messages = new ArrayList<>();
-        messages.add(new ChatMessage(systemRole, FUNCTION_SYSTEM_PROMPT));
+        String systemPrompt = toolChoiceMode != null && toolChoiceMode.usesRequiredToolPrompt()
+            ? REQUIRED_TOOL_SYSTEM_PROMPT
+            : OPTIONAL_TOOL_SYSTEM_PROMPT;
+        messages.add(new ChatMessage(systemRole, systemPrompt));
         messages.add(new ChatMessage(ChatMessage.ChatMessageRole.USER, prompt));
         return messages;
     }
@@ -152,10 +159,16 @@ public class LlmApiClient {
      */
     public String createChatCompletionWithFunctions(List<ChatMessage> messages, List<Map<String, Object>> functions) 
             throws APIProviderException {
+        return createChatCompletionWithFunctions(messages, functions, ToolChoiceMode.AUTO);
+    }
+
+    public String createChatCompletionWithFunctions(List<ChatMessage> messages, List<Map<String, Object>> functions,
+                                                    ToolChoiceMode toolChoiceMode)
+            throws APIProviderException {
         if (provider == null) {
             throw new IllegalStateException("LLM provider is not initialized.");
         }
-        return provider.createChatCompletionWithFunctions(messages, functions);
+        return provider.createChatCompletionWithFunctions(messages, functions, toolChoiceMode);
     }
     
     /**
@@ -163,10 +176,17 @@ public class LlmApiClient {
      */
     public String createChatCompletionWithFunctionsFullResponse(List<ChatMessage> messages, List<Map<String, Object>> functions) 
             throws APIProviderException {
+        return createChatCompletionWithFunctionsFullResponse(messages, functions, ToolChoiceMode.AUTO);
+    }
+
+    public String createChatCompletionWithFunctionsFullResponse(List<ChatMessage> messages,
+                                                                List<Map<String, Object>> functions,
+                                                                ToolChoiceMode toolChoiceMode)
+            throws APIProviderException {
         if (provider == null) {
             throw new IllegalStateException("LLM provider is not initialized.");
         }
-        return provider.createChatCompletionWithFunctionsFullResponse(messages, functions);
+        return provider.createChatCompletionWithFunctionsFullResponse(messages, functions, toolChoiceMode);
     }
     
     /**

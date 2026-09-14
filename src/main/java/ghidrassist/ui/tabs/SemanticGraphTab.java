@@ -2,7 +2,9 @@ package ghidrassist.ui.tabs;
 
 import javax.swing.*;
 import java.awt.*;
+import java.util.List;
 import ghidrassist.core.TabController;
+import ghidrassist.graphrag.SemanticAnalysisOptions;
 import ghidrassist.ui.tabs.semanticgraph.ListViewPanel;
 import ghidrassist.ui.tabs.semanticgraph.GraphViewPanel;
 import ghidrassist.ui.tabs.semanticgraph.SearchViewPanel;
@@ -312,17 +314,9 @@ public class SemanticGraphTab extends JPanel {
             return;
         }
 
-        // Otherwise confirm before starting
-        int result = JOptionPane.showConfirmDialog(this,
-                "Run Semantic Analysis on all stale nodes?\n" +
-                "This will use the LLM to generate summaries for unsummarized functions.\n" +
-                "This may take a while and consume API credits.",
-                "Semantic Analysis",
-                JOptionPane.YES_NO_OPTION,
-                JOptionPane.QUESTION_MESSAGE);
-
-        if (result == JOptionPane.YES_OPTION) {
-            controller.handleSemanticGraphSemanticAnalysis();
+        SemanticAnalysisOptions options = promptForSemanticAnalysisOptions();
+        if (options != null) {
+            controller.handleSemanticGraphSemanticAnalysis(options);
         }
     }
 
@@ -365,17 +359,85 @@ public class SemanticGraphTab extends JPanel {
             return;
         }
 
-        // Otherwise confirm before starting
-        int result = JOptionPane.showConfirmDialog(this,
-                "Run Semantic Analysis on all stale nodes?\n" +
-                "This will use the LLM to generate summaries for unsummarized functions.\n" +
-                "This may take a while and consume API credits.",
-                "Semantic Analysis",
-                JOptionPane.YES_NO_OPTION,
-                JOptionPane.QUESTION_MESSAGE);
+        SemanticAnalysisOptions options = promptForSemanticAnalysisOptions();
+        if (options != null) {
+            controller.handleSemanticGraphSemanticAnalysis(options);
+        }
+    }
 
-        if (result == JOptionPane.YES_OPTION) {
-            controller.handleSemanticGraphSemanticAnalysis();
+    private SemanticAnalysisOptions promptForSemanticAnalysisOptions() {
+        JTextField includeNamesField = new JTextField();
+        JTextField excludeNamesField = new JTextField();
+        JTextField includeRangesField = new JTextField();
+        JTextField excludeRangesField = new JTextField();
+        JSpinner maxNodesSpinner = new JSpinner(new SpinnerNumberModel(0, 0, 100000, 50));
+        JCheckBox includeExternalCheckBox = new JCheckBox("Include external/import nodes");
+
+        JPanel form = new JPanel(new GridBagLayout());
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.gridx = 0;
+        gbc.gridy = 0;
+        gbc.anchor = GridBagConstraints.WEST;
+        gbc.insets = new Insets(3, 3, 3, 8);
+        form.add(new JLabel("Include names:"), gbc);
+        gbc.gridy++;
+        form.add(new JLabel("Exclude names:"), gbc);
+        gbc.gridy++;
+        form.add(new JLabel("Include ranges:"), gbc);
+        gbc.gridy++;
+        form.add(new JLabel("Exclude ranges:"), gbc);
+        gbc.gridy++;
+        form.add(new JLabel("Max nodes:"), gbc);
+
+        gbc.gridx = 1;
+        gbc.gridy = 0;
+        gbc.weightx = 1.0;
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        form.add(includeNamesField, gbc);
+        gbc.gridy++;
+        form.add(excludeNamesField, gbc);
+        gbc.gridy++;
+        form.add(includeRangesField, gbc);
+        gbc.gridy++;
+        form.add(excludeRangesField, gbc);
+        gbc.gridy++;
+        form.add(maxNodesSpinner, gbc);
+        gbc.gridy++;
+        form.add(includeExternalCheckBox, gbc);
+
+        JTextArea hint = new JTextArea(
+                "Names are comma-separated substrings. Ranges are hex start-end pairs, comma-separated.\n" +
+                "Max nodes 0 means all matching stale/unsummarized nodes.");
+        hint.setEditable(false);
+        hint.setOpaque(false);
+        hint.setLineWrap(true);
+        hint.setWrapStyleWord(true);
+
+        JPanel panel = new JPanel(new BorderLayout(0, 8));
+        panel.add(new JLabel("Run Semantic Analysis on matching stale or unsummarized nodes."), BorderLayout.NORTH);
+        panel.add(form, BorderLayout.CENTER);
+        panel.add(hint, BorderLayout.SOUTH);
+
+        int result = JOptionPane.showConfirmDialog(this, panel, "Semantic Analysis Scope",
+                JOptionPane.OK_CANCEL_OPTION, JOptionPane.QUESTION_MESSAGE);
+        if (result != JOptionPane.OK_OPTION) {
+            return null;
+        }
+
+        try {
+            List<String> includeNames = SemanticAnalysisOptions.parsePatternList(includeNamesField.getText());
+            List<String> excludeNames = SemanticAnalysisOptions.parsePatternList(excludeNamesField.getText());
+            List<SemanticAnalysisOptions.AddressRange> includeRanges =
+                    SemanticAnalysisOptions.parseRangeList(includeRangesField.getText());
+            List<SemanticAnalysisOptions.AddressRange> excludeRanges =
+                    SemanticAnalysisOptions.parseRangeList(excludeRangesField.getText());
+            int maxNodes = (Integer) maxNodesSpinner.getValue();
+            return new SemanticAnalysisOptions(includeNames, excludeNames, includeRanges, excludeRanges,
+                    maxNodes, includeExternalCheckBox.isSelected());
+        } catch (IllegalArgumentException e) {
+            JOptionPane.showMessageDialog(this, "Invalid semantic analysis scope: " + e.getMessage(),
+                    "Semantic Analysis", JOptionPane.ERROR_MESSAGE);
+            return null;
         }
     }
 

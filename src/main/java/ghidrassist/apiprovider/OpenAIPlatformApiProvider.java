@@ -37,8 +37,9 @@ public class OpenAIPlatformApiProvider extends APIProvider implements FunctionCa
 
     private volatile boolean isCancelled = false;
 
-    public OpenAIPlatformApiProvider(String name, String model, Integer maxTokens, String url, String key, boolean disableTlsVerification, Integer timeout) {
-        super(name, ProviderType.OPENAI_PLATFORM_API, model, maxTokens, url, key, disableTlsVerification, timeout);
+    public OpenAIPlatformApiProvider(String name, String model, Integer maxTokens, String url, String key,
+                                     boolean disableTlsVerification, boolean bypassProxy, Integer timeout) {
+        super(name, ProviderType.OPENAI_PLATFORM_API, model, maxTokens, url, key, disableTlsVerification, bypassProxy, timeout);
     }
 
     public static OpenAIPlatformApiProvider fromConfig(APIProviderConfig config) {
@@ -49,6 +50,7 @@ public class OpenAIPlatformApiProvider extends APIProvider implements FunctionCa
             config.getUrl(),
             config.getKey(),
             config.isDisableTlsVerification(),
+            config.isBypassProxy(),
             config.getTimeout()
         );
     }
@@ -56,7 +58,7 @@ public class OpenAIPlatformApiProvider extends APIProvider implements FunctionCa
     @Override
     protected OkHttpClient buildClient() {
         try {
-            OkHttpClient.Builder builder = new OkHttpClient.Builder()
+            OkHttpClient.Builder builder = configureClientBuilder(new OkHttpClient.Builder())
                 .connectTimeout(super.timeout)
                 .readTimeout(super.timeout)
                 .writeTimeout(super.timeout)
@@ -293,10 +295,19 @@ public class OpenAIPlatformApiProvider extends APIProvider implements FunctionCa
 
     @Override
     public String createChatCompletionWithFunctionsFullResponse(List<ChatMessage> messages, List<Map<String, Object>> functions) throws APIProviderException {
+        return createChatCompletionWithFunctionsFullResponse(messages, functions, ToolChoiceMode.AUTO);
+    }
+
+    @Override
+    public String createChatCompletionWithFunctionsFullResponse(List<ChatMessage> messages,
+                                                                List<Map<String, Object>> functions,
+                                                                ToolChoiceMode toolChoiceMode) throws APIProviderException {
         JsonObject payload = buildChatCompletionPayload(messages, false);
         
         // Add tools (functions) to the payload
         payload.add("tools", gson.toJsonTree(functions));
+        payload.addProperty("tool_choice",
+            (toolChoiceMode != null ? toolChoiceMode : ToolChoiceMode.AUTO).toOpenAIToolChoice(messages));
         
         Request request = new Request.Builder()
             .url(url + OPENAI_CHAT_ENDPOINT)
@@ -316,13 +327,18 @@ public class OpenAIPlatformApiProvider extends APIProvider implements FunctionCa
 
     @Override
     public String createChatCompletionWithFunctions(List<ChatMessage> messages, List<Map<String, Object>> functions) throws APIProviderException {
+        return createChatCompletionWithFunctions(messages, functions, ToolChoiceMode.AUTO);
+    }
+
+    @Override
+    public String createChatCompletionWithFunctions(List<ChatMessage> messages, List<Map<String, Object>> functions,
+                                                    ToolChoiceMode toolChoiceMode) throws APIProviderException {
         JsonObject payload = buildChatCompletionPayload(messages, false);
         
         // Add tools (functions) to the payload
         payload.add("tools", gson.toJsonTree(functions));
-
-        // Force tool use - "required" means model must use at least one tool
-        payload.addProperty("tool_choice", "required");
+        payload.addProperty("tool_choice",
+            (toolChoiceMode != null ? toolChoiceMode : ToolChoiceMode.AUTO).toOpenAIToolChoice(messages));
 
         Request request = new Request.Builder()
             .url(url + OPENAI_CHAT_ENDPOINT)
@@ -428,35 +444,101 @@ public class OpenAIPlatformApiProvider extends APIProvider implements FunctionCa
 
     @Override
     public List<String> getAvailableModels() throws APIProviderException {
-        Request request = new Request.Builder()
-            .url(url + OPENAI_MODELS_ENDPOINT)
-            .build();
+        APIProviderException lastError = null;
 
-        try (Response response = executeWithRetry(request, "getAvailableModels")) {
-            String responseBody = response.body().string();
-            try {
-                JsonObject responseObj = gson.fromJson(responseBody, JsonObject.class);
-                List<String> modelIds = new ArrayList<>();
-                
-                if (!responseObj.has("data")) {
-                    throw new ResponseException(name, "get_models", 
-                        ResponseException.ResponseErrorType.MISSING_REQUIRED_FIELD);
+        for (String endpoint : getModelsEndpointCandidates()) {
+            Request request = new Request.Builder()
+                .url(endpoint)
+                .header("Accept", "application/json")
+                .get()
+                .build();
+
+            try (Response response = client.newCall(request).execute()) {
+                if (response.code() == 401 || response.code() == 403) {
+                    throw handleHttpError(response, "getAvailableModels");
                 }
-                
-                JsonArray models = responseObj.getAsJsonArray("data");
-                for (JsonElement model : models) {
-                    if (model.isJsonObject() && model.getAsJsonObject().has("id")) {
-                        modelIds.add(model.getAsJsonObject().get("id").getAsString());
-                    }
+
+                if (!response.isSuccessful()) {
+                    lastError = handleHttpError(response, "getAvailableModels");
+                    continue;
                 }
-                
-                return modelIds;
-            } catch (JsonSyntaxException e) {
-                throw new ResponseException(name, "getAvailableModels", 
-                    ResponseException.ResponseErrorType.MALFORMED_JSON, e);
+
+                String responseBody = response.body() != null ? response.body().string() : "";
+                List<String> modelIds = extractModelIdsFromResponse(responseBody);
+                if (!modelIds.isEmpty()) {
+                    return modelIds;
+                }
+
+                lastError = new APIProviderException(
+                    APIProviderException.ErrorCategory.SERVICE_ERROR,
+                    name,
+                    "getAvailableModels",
+                    "No available models were found."
+                );
+            } catch (IOException e) {
+                lastError = handleNetworkError(e, "getAvailableModels");
+            } catch (APIProviderException e) {
+                lastError = e;
             }
-        } catch (IOException e) {
-            throw handleNetworkError(e, "getAvailableModels");
+        }
+
+        if (lastError != null) {
+            throw lastError;
+        }
+
+        throw new APIProviderException(
+            APIProviderException.ErrorCategory.SERVICE_ERROR,
+            name,
+            "getAvailableModels",
+            "No available models were found."
+        );
+    }
+
+    protected List<String> getModelsEndpointCandidates() {
+        List<String> candidates = new ArrayList<>();
+        String baseUrl = (url != null ? url.trim() : "").replaceAll("/+$", "");
+
+        if (baseUrl.isEmpty()) {
+            candidates.add("https://api.openai.com/v1/models");
+            return candidates;
+        }
+
+        if (baseUrl.endsWith("/models")) {
+            candidates.add(baseUrl);
+            return candidates;
+        }
+
+        candidates.add(baseUrl + "/models");
+        if (!baseUrl.endsWith("/v1")) {
+            candidates.add(baseUrl + "/v1/models");
+        }
+
+        return candidates;
+    }
+
+    protected List<String> extractModelIdsFromResponse(String responseBody) throws APIProviderException {
+        try {
+            JsonElement parsed = JsonParser.parseString(responseBody);
+            if (!parsed.isJsonObject()) {
+                throw new ResponseException(name, "getAvailableModels",
+                    ResponseException.ResponseErrorType.MALFORMED_JSON);
+            }
+
+            JsonObject responseObj = parsed.getAsJsonObject();
+            JsonArray models = responseObj.has("data") && responseObj.get("data").isJsonArray()
+                ? responseObj.getAsJsonArray("data")
+                : new JsonArray();
+
+            List<String> modelIds = new ArrayList<>();
+            for (JsonElement model : models) {
+                if (model.isJsonObject() && model.getAsJsonObject().has("id")) {
+                    modelIds.add(model.getAsJsonObject().get("id").getAsString());
+                }
+            }
+            return modelIds;
+        } catch (JsonSyntaxException e) {
+            throw new ResponseException(name, "getAvailableModels",
+                ResponseException.ResponseErrorType.MALFORMED_JSON, e);
         }
     }
 
@@ -618,16 +700,25 @@ public class OpenAIPlatformApiProvider extends APIProvider implements FunctionCa
             JsonObject messageObj = new JsonObject();
             messageObj.addProperty("role", message.getRole());
             
-            // Handle content (can be null for tool calling assistant messages)
+            // Handle content - tool messages MUST always have content (even empty string)
             if (message.getContent() != null) {
                 messageObj.addProperty("content", message.getContent());
+            } else if ("tool".equals(message.getRole())) {
+                // OpenAI requires content field for tool messages, even if empty
+                messageObj.addProperty("content", "");
             }
-            
+
+            // Include reasoning_content for assistant messages (required by DeepSeek thinking mode)
+            if (ChatMessage.ChatMessageRole.ASSISTANT.equals(message.getRole()) &&
+                    message.getThinkingContent() != null && !message.getThinkingContent().isEmpty()) {
+                messageObj.addProperty("reasoning_content", message.getThinkingContent());
+            }
+
             // Handle tool calls for assistant messages
             if (message.getToolCalls() != null) {
                 messageObj.add("tool_calls", message.getToolCalls());
             }
-            
+
             // Handle tool call ID for tool response messages
             if (message.getToolCallId() != null) {
                 messageObj.addProperty("tool_call_id", message.getToolCallId());
@@ -635,9 +726,163 @@ public class OpenAIPlatformApiProvider extends APIProvider implements FunctionCa
             
             messagesArray.add(messageObj);
         }
+        // Last-line-of-defense: validate tool_call/result pairing in the payload
+        sanitizeToolCallsInPayload(messagesArray);
+
         payload.add("messages", messagesArray);
 
         return payload;
+    }
+
+    /**
+     * Sanitize the messages array to prevent orphaned tool_calls from reaching the API.
+     * For each assistant message with tool_calls, verifies matching tool result messages exist.
+     * If not, removes the tool_calls or inserts placeholder tool results.
+     */
+    private void sanitizeToolCallsInPayload(JsonArray messagesArray) {
+        for (int i = 0; i < messagesArray.size(); i++) {
+            JsonObject msg = messagesArray.get(i).getAsJsonObject();
+            if (!"assistant".equals(getStringField(msg, "role"))) continue;
+            if (!msg.has("tool_calls") || msg.get("tool_calls").isJsonNull()) continue;
+
+            JsonArray toolCalls = msg.getAsJsonArray("tool_calls");
+            if (toolCalls.size() == 0) continue;
+
+            // Collect expected tool_call IDs
+            java.util.List<String> expectedIds = new java.util.ArrayList<>();
+            for (int tc = 0; tc < toolCalls.size(); tc++) {
+                JsonObject tcObj = toolCalls.get(tc).getAsJsonObject();
+                String id = getStringField(tcObj, "id");
+                if (id != null && !id.isEmpty()) {
+                    expectedIds.add(id);
+                }
+            }
+
+            if (expectedIds.isEmpty()) {
+                // All IDs are null/empty - remove tool_calls
+                msg.remove("tool_calls");
+                ghidra.util.Msg.warn(this, "Payload sanitization: removed tool_calls with null/empty IDs at message " + i);
+                continue;
+            }
+
+            // Check for matching tool result messages after this assistant message
+            java.util.Set<String> foundIds = new java.util.HashSet<>();
+            for (int j = i + 1; j < messagesArray.size(); j++) {
+                JsonObject resultMsg = messagesArray.get(j).getAsJsonObject();
+                String role = getStringField(resultMsg, "role");
+                if ("tool".equals(role)) {
+                    String tcId = getStringField(resultMsg, "tool_call_id");
+                    if (tcId != null) foundIds.add(tcId);
+                } else if ("assistant".equals(role) || "user".equals(role)) {
+                    break;
+                }
+            }
+
+            java.util.List<String> missingIds = new java.util.ArrayList<>();
+            for (String id : expectedIds) {
+                if (!foundIds.contains(id)) {
+                    missingIds.add(id);
+                }
+            }
+
+            if (missingIds.isEmpty()) continue;
+
+            if (missingIds.size() == expectedIds.size()) {
+                // No results at all - remove tool_calls from assistant message
+                msg.remove("tool_calls");
+                ghidra.util.Msg.warn(this, "Payload sanitization: removed orphaned tool_calls at message " + i +
+                    " (no matching results for " + expectedIds.size() + " tool calls)");
+            } else {
+                // Insert placeholder results for missing IDs
+                int insertAt = i + 1;
+                for (int j = i + 1; j < messagesArray.size(); j++) {
+                    if ("tool".equals(getStringField(messagesArray.get(j).getAsJsonObject(), "role"))) {
+                        insertAt = j + 1;
+                    } else {
+                        break;
+                    }
+                }
+                for (String missingId : missingIds) {
+                    JsonObject placeholder = new JsonObject();
+                    placeholder.addProperty("role", "tool");
+                    placeholder.addProperty("tool_call_id", missingId);
+                    placeholder.addProperty("content", "Error: Tool execution result was lost.");
+                    // JsonArray doesn't have an insert method, so rebuild
+                    // We'll add at the end and it will be in the right group
+                    messagesArray.add(placeholder);
+                    ghidra.util.Msg.warn(this, "Payload sanitization: inserted placeholder for tool_call_id=" + missingId);
+                }
+                // Re-order: move placeholders to the correct position
+                reorderToolResults(messagesArray);
+            }
+        }
+    }
+
+    /**
+     * Reorder messages so tool results immediately follow their assistant message.
+     */
+    private void reorderToolResults(JsonArray messagesArray) {
+        // Build a corrected list
+        java.util.List<JsonObject> ordered = new java.util.ArrayList<>();
+        for (int i = 0; i < messagesArray.size(); i++) {
+            ordered.add(messagesArray.get(i).getAsJsonObject());
+        }
+
+        java.util.List<JsonObject> result = new java.util.ArrayList<>();
+        java.util.Set<Integer> processed = new java.util.HashSet<>();
+
+        for (int i = 0; i < ordered.size(); i++) {
+            if (processed.contains(i)) continue;
+            JsonObject msg = ordered.get(i);
+            result.add(msg);
+            processed.add(i);
+
+            // If this is an assistant with tool_calls, collect all tool results for it
+            if ("assistant".equals(getStringField(msg, "role")) &&
+                msg.has("tool_calls") && !msg.get("tool_calls").isJsonNull()) {
+
+                JsonArray toolCalls = msg.getAsJsonArray("tool_calls");
+                java.util.Set<String> tcIds = new java.util.HashSet<>();
+                for (int tc = 0; tc < toolCalls.size(); tc++) {
+                    String id = getStringField(toolCalls.get(tc).getAsJsonObject(), "id");
+                    if (id != null) tcIds.add(id);
+                }
+
+                // Find all matching tool results anywhere in the array
+                for (int j = 0; j < ordered.size(); j++) {
+                    if (processed.contains(j)) continue;
+                    JsonObject candidate = ordered.get(j);
+                    if ("tool".equals(getStringField(candidate, "role"))) {
+                        String candidateId = getStringField(candidate, "tool_call_id");
+                        if (candidateId != null && tcIds.contains(candidateId)) {
+                            result.add(candidate);
+                            processed.add(j);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Replace contents of messagesArray
+        while (messagesArray.size() > 0) {
+            messagesArray.remove(0);
+        }
+        for (JsonObject msg : result) {
+            messagesArray.add(msg);
+        }
+    }
+
+    /**
+     * Safely extract a string field from a JsonObject.
+     */
+    private String getStringField(JsonObject obj, String field) {
+        if (obj.has(field)) {
+            JsonElement el = obj.get(field);
+            if (el != null && !el.isJsonNull() && el.isJsonPrimitive()) {
+                return el.getAsString();
+            }
+        }
+        return null;
     }
 
     private String extractContentFromResponse(JsonObject responseObj) {
@@ -678,7 +923,7 @@ public class OpenAIPlatformApiProvider extends APIProvider implements FunctionCa
          * @param fullText The complete text content
          * @param toolCalls List of tool calls (empty if none)
          */
-        void onStreamComplete(String stopReason, String fullText, List<ToolCall> toolCalls);
+        void onStreamComplete(String stopReason, String fullText, String reasoningContent, List<ToolCall> toolCalls);
 
         /**
          * Called when an error occurs during streaming.
@@ -717,8 +962,19 @@ public class OpenAIPlatformApiProvider extends APIProvider implements FunctionCa
         List<Map<String, Object>> functions,
         StreamingFunctionHandler handler
     ) throws APIProviderException {
+        streamChatCompletionWithFunctions(messages, functions, ToolChoiceMode.AUTO, handler);
+    }
+
+    public void streamChatCompletionWithFunctions(
+        List<ChatMessage> messages,
+        List<Map<String, Object>> functions,
+        ToolChoiceMode toolChoiceMode,
+        StreamingFunctionHandler handler
+    ) throws APIProviderException {
         JsonObject payload = buildChatCompletionPayload(messages, true);
         payload.add("tools", gson.toJsonTree(functions));
+        payload.addProperty("tool_choice",
+            (toolChoiceMode != null ? toolChoiceMode : ToolChoiceMode.AUTO).toOpenAIToolChoice(messages));
         executeStreamingFunctionsWithRetry(payload, handler, "stream_chat_completion_with_functions", 0);
     }
 
@@ -776,6 +1032,7 @@ public class OpenAIPlatformApiProvider extends APIProvider implements FunctionCa
 
                     BufferedSource source = responseBody.source();
                     StringBuilder textBuilder = new StringBuilder();
+                    StringBuilder reasoningBuilder = new StringBuilder();
                     java.util.Map<Integer, ToolCallAccumulator> toolCallsMap = new java.util.HashMap<>();
                     String finishReason = "stop";
 
@@ -798,10 +1055,19 @@ public class OpenAIPlatformApiProvider extends APIProvider implements FunctionCa
                                             if (args.isEmpty()) {
                                                 args = "{}";
                                             }
-                                            toolCalls.add(new ToolCall(acc.id, acc.name, args));
+                                            // Generate fallback ID if streaming didn't capture one
+                                            String tcId = acc.id;
+                                            if (tcId == null || tcId.isEmpty()) {
+                                                tcId = "call_stream_" + entry.getKey() + "_" + System.currentTimeMillis();
+                                                ghidra.util.Msg.warn(OpenAIPlatformApiProvider.this,
+                                                    "Streaming tool call at index " + entry.getKey() +
+                                                    " had no ID, generated fallback: " + tcId);
+                                            }
+                                            toolCalls.add(new ToolCall(tcId, acc.name, args));
                                         });
 
-                                    handler.onStreamComplete(finishReason, textBuilder.toString(), toolCalls);
+                                    handler.onStreamComplete(finishReason, textBuilder.toString(),
+                                        reasoningBuilder.toString(), toolCalls);
                                     return;
                                 }
 
@@ -824,6 +1090,11 @@ public class OpenAIPlatformApiProvider extends APIProvider implements FunctionCa
                                                     handler.onTextUpdate(content);
                                                 }
 
+                                                // Capture reasoning_content (DeepSeek thinking mode)
+                                                if (delta.has("reasoning_content") && !delta.get("reasoning_content").isJsonNull()) {
+                                                    reasoningBuilder.append(delta.get("reasoning_content").getAsString());
+                                                }
+
                                                 // Buffer tool calls
                                                 if (delta.has("tool_calls")) {
                                                     JsonArray toolCallDeltas = delta.getAsJsonArray("tool_calls");
@@ -833,16 +1104,16 @@ public class OpenAIPlatformApiProvider extends APIProvider implements FunctionCa
 
                                                         ToolCallAccumulator acc = toolCallsMap.computeIfAbsent(index, k -> new ToolCallAccumulator());
 
-                                                        if (toolCallDelta.has("id")) {
+                                                        if (toolCallDelta.has("id") && !toolCallDelta.get("id").isJsonNull()) {
                                                             acc.id = toolCallDelta.get("id").getAsString();
                                                         }
 
                                                         if (toolCallDelta.has("function")) {
                                                             JsonObject functionDelta = toolCallDelta.getAsJsonObject("function");
-                                                            if (functionDelta.has("name")) {
+                                                            if (functionDelta.has("name") && !functionDelta.get("name").isJsonNull()) {
                                                                 acc.name = functionDelta.get("name").getAsString();
                                                             }
-                                                            if (functionDelta.has("arguments")) {
+                                                            if (functionDelta.has("arguments") && !functionDelta.get("arguments").isJsonNull()) {
                                                                 acc.argumentsBuffer.append(functionDelta.get("arguments").getAsString());
                                                             }
                                                         }
@@ -928,40 +1199,49 @@ public class OpenAIPlatformApiProvider extends APIProvider implements FunctionCa
         try {
             JsonObject errorObj = gson.fromJson(responseBody, JsonObject.class);
             if (errorObj.has("error")) {
-                JsonObject error = errorObj.getAsJsonObject("error");
-                if (error.has("type")) {
-                    JsonElement typeElement = error.get("type");
-                    if (typeElement != null && !typeElement.isJsonNull()) {
-                        return typeElement.getAsString();
-                    }
-                } else if (error.has("code")) {
-                    JsonElement codeElement = error.get("code");
-                    if (codeElement != null && !codeElement.isJsonNull()) {
-                        return codeElement.getAsString();
+                JsonElement errorElement = errorObj.get("error");
+                if (errorElement.isJsonObject()) {
+                    JsonObject error = errorElement.getAsJsonObject();
+                    if (error.has("type")) {
+                        JsonElement typeElement = error.get("type");
+                        if (typeElement != null && !typeElement.isJsonNull()) {
+                            return typeElement.getAsString();
+                        }
+                    } else if (error.has("code")) {
+                        JsonElement codeElement = error.get("code");
+                        if (codeElement != null && !codeElement.isJsonNull()) {
+                            return codeElement.getAsString();
+                        }
                     }
                 }
             }
         } catch (JsonSyntaxException e) {
             // Ignore parsing errors
         }
-        
+
         return null;
     }
-    
+
     @Override
     protected String extractErrorMessage(String responseBody, int statusCode) {
         if (responseBody == null || responseBody.isEmpty()) {
             return null;
         }
-        
+
         try {
             JsonObject errorObj = gson.fromJson(responseBody, JsonObject.class);
             if (errorObj.has("error")) {
-                JsonObject error = errorObj.getAsJsonObject("error");
-                if (error.has("message")) {
-                    JsonElement messageElement = error.get("message");
-                    if (messageElement != null && !messageElement.isJsonNull()) {
-                        return messageElement.getAsString();
+                JsonElement errorElement = errorObj.get("error");
+                if (errorElement.isJsonPrimitive()) {
+                    return errorElement.getAsString();
+                }
+                if (errorElement.isJsonObject()) {
+                    JsonObject error = errorElement.getAsJsonObject();
+                    if (error.has("message")) {
+                        JsonElement messageElement = error.get("message");
+                        if (messageElement != null && !messageElement.isJsonNull()) {
+                            return messageElement.getAsString();
+                        }
                     }
                 }
             }

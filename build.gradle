@@ -65,7 +65,7 @@ dependencies {
 	implementation "com.squareup.okhttp3:okhttp:4.12.0"
 	
 	// MCP SDK core dependency
-	implementation 'io.modelcontextprotocol.sdk:mcp:0.14.1'
+	implementation 'io.modelcontextprotocol.sdk:mcp:0.17.1'
 
 	// Project Reactor dependency for async MCP client
 	implementation 'io.projectreactor:reactor-core:3.6.0'
@@ -73,8 +73,6 @@ dependencies {
 	// JGraphT - Graph algorithms for Graph-RAG (community detection, traversal)
 	implementation 'org.jgrapht:jgrapht-core:1.5.2'
 
-	// JGraphX - Visual graph rendering for Semantic Graph tab
-	implementation 'com.github.vlsi.mxgraph:jgraphx:4.2.2'
 }
 
 // Exclude additional files from the built extension

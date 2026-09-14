@@ -94,6 +94,10 @@ public class ActionToolProvider implements ToolProvider {
 
     @Override
     public List<Tool> getTools() {
+        if (currentProgram == null || currentAddress == null) {
+            return java.util.Collections.emptyList();
+        }
+
         List<Tool> tools = new ArrayList<>();
         for (ActionToolDef def : ACTION_TOOLS.values()) {
             // Add prefix to tool name

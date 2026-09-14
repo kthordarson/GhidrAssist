@@ -72,7 +72,18 @@ With MCP enabled in Query tab, the LLM can:
 - Trace call chains
 - Identify risky code paths
 
+## Sharing via SymGraph
+
+If you want to contribute:
+
+1. Open the SymGraph tab
+2. Select **Graph**
+3. Click **Push to SymGraph**
+
+See [SymGraph Tab](../tabs/symgraph-tab.md).
+
 ## Related Documentation
 
 - [Semantic Graph Tab Reference](../tabs/semantic-graph-tab.md)
 - [Query Workflow](query-workflow.md)
+- [SymGraph Tab](../tabs/symgraph-tab.md)

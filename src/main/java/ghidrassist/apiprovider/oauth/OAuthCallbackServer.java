@@ -269,6 +269,17 @@ public class OAuthCallbackServer {
     }
     
     /**
+     * Creates an OAuth callback server configured for Google Gemini OAuth.
+     * Uses dynamic port (port 0) with /oauth2callback path, matching the Gemini CLI.
+     *
+     * @param expectedState The state parameter to validate against CSRF attacks
+     * @return A configured OAuthCallbackServer for Gemini
+     */
+    public static OAuthCallbackServer forGemini(String expectedState) {
+        return new OAuthCallbackServer(expectedState, "/oauth2callback", 0, true);
+    }
+
+    /**
      * Starts the callback server on the preferred port (with fallback).
      * 
      * @return The port number the server is listening on

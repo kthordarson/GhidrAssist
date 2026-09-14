@@ -38,8 +38,8 @@ public class AzureOpenAIProvider extends APIProvider
     private String deploymentName;
 
     public AzureOpenAIProvider(String name, String model, Integer maxTokens, String url, String key,
-            boolean disableTlsVerification, Integer timeout) {
-        super(name, ProviderType.AZURE_OPENAI, model, maxTokens, url, key, disableTlsVerification, timeout);
+            boolean disableTlsVerification, boolean bypassProxy, Integer timeout) {
+        super(name, ProviderType.AZURE_OPENAI, model, maxTokens, url, key, disableTlsVerification, bypassProxy, timeout);
 
         // Extract deployment name from model if it contains a deployment name
         // Format: deploymentName or deploymentName:modelName
@@ -60,13 +60,14 @@ public class AzureOpenAIProvider extends APIProvider
                 config.getUrl(),
                 config.getKey(),
                 config.isDisableTlsVerification(),
+                config.isBypassProxy(),
                 config.getTimeout());
     }
 
     @Override
     protected OkHttpClient buildClient() {
         try {
-            OkHttpClient.Builder builder = new OkHttpClient.Builder()
+            OkHttpClient.Builder builder = configureClientBuilder(new OkHttpClient.Builder())
                     .connectTimeout(super.timeout)
                     .readTimeout(super.timeout)
                     .writeTimeout(super.timeout)
@@ -309,10 +310,18 @@ public class AzureOpenAIProvider extends APIProvider
     @Override
     public String createChatCompletionWithFunctionsFullResponse(List<ChatMessage> messages,
             List<Map<String, Object>> functions) throws APIProviderException {
+        return createChatCompletionWithFunctionsFullResponse(messages, functions, ToolChoiceMode.AUTO);
+    }
+
+    @Override
+    public String createChatCompletionWithFunctionsFullResponse(List<ChatMessage> messages,
+            List<Map<String, Object>> functions, ToolChoiceMode toolChoiceMode) throws APIProviderException {
         JsonObject payload = buildChatCompletionPayload(messages, false);
 
         // Add tools (functions) to the payload
         payload.add("tools", gson.toJsonTree(functions));
+        payload.addProperty("tool_choice",
+                (toolChoiceMode != null ? toolChoiceMode : ToolChoiceMode.AUTO).toOpenAIToolChoice(messages));
 
         String endpoint = buildChatCompletionUrl();
         Request request = new Request.Builder()
@@ -335,13 +344,18 @@ public class AzureOpenAIProvider extends APIProvider
     @Override
     public String createChatCompletionWithFunctions(List<ChatMessage> messages, List<Map<String, Object>> functions)
             throws APIProviderException {
+        return createChatCompletionWithFunctions(messages, functions, ToolChoiceMode.AUTO);
+    }
+
+    @Override
+    public String createChatCompletionWithFunctions(List<ChatMessage> messages, List<Map<String, Object>> functions,
+            ToolChoiceMode toolChoiceMode) throws APIProviderException {
         JsonObject payload = buildChatCompletionPayload(messages, false);
 
         // Add tools (functions) to the payload
         payload.add("tools", gson.toJsonTree(functions));
-
-        // Force tool use - "required" means model must use at least one tool
-        payload.addProperty("tool_choice", "required");
+        payload.addProperty("tool_choice",
+                (toolChoiceMode != null ? toolChoiceMode : ToolChoiceMode.AUTO).toOpenAIToolChoice(messages));
 
         String endpoint = buildChatCompletionUrl();
         Request request = new Request.Builder()
@@ -588,9 +602,12 @@ public class AzureOpenAIProvider extends APIProvider
             JsonObject messageObj = new JsonObject();
             messageObj.addProperty("role", message.getRole());
 
-            // Handle content (can be null for tool calling assistant messages)
+            // Handle content - tool messages MUST always have content (even empty string)
             if (message.getContent() != null) {
                 messageObj.addProperty("content", message.getContent());
+            } else if ("tool".equals(message.getRole())) {
+                // OpenAI requires content field for tool messages, even if empty
+                messageObj.addProperty("content", "");
             }
 
             // Handle tool calls for assistant messages
@@ -605,9 +622,156 @@ public class AzureOpenAIProvider extends APIProvider
 
             messagesArray.add(messageObj);
         }
+        // Last-line-of-defense: validate tool_call/result pairing in the payload
+        sanitizeToolCallsInPayload(messagesArray);
+
         payload.add("messages", messagesArray);
 
         return payload;
+    }
+
+    /**
+     * Sanitize the messages array to prevent orphaned tool_calls from reaching the API.
+     * For each assistant message with tool_calls, verifies matching tool result messages exist.
+     * If not, removes the tool_calls or inserts placeholder tool results.
+     */
+    private void sanitizeToolCallsInPayload(JsonArray messagesArray) {
+        for (int i = 0; i < messagesArray.size(); i++) {
+            JsonObject msg = messagesArray.get(i).getAsJsonObject();
+            if (!"assistant".equals(getStringField(msg, "role"))) continue;
+            if (!msg.has("tool_calls") || msg.get("tool_calls").isJsonNull()) continue;
+
+            JsonArray toolCalls;
+            try {
+                toolCalls = msg.getAsJsonArray("tool_calls");
+            } catch (Exception e) {
+                continue;
+            }
+            if (toolCalls.size() == 0) continue;
+
+            // Collect expected tool_call IDs
+            java.util.List<String> expectedIds = new java.util.ArrayList<>();
+            for (int tc = 0; tc < toolCalls.size(); tc++) {
+                JsonObject tcObj = toolCalls.get(tc).getAsJsonObject();
+                String id = getStringField(tcObj, "id");
+                if (id != null && !id.isEmpty()) {
+                    expectedIds.add(id);
+                }
+            }
+
+            if (expectedIds.isEmpty()) {
+                msg.remove("tool_calls");
+                ghidra.util.Msg.warn(this, "Payload sanitization: removed tool_calls with null/empty IDs at message " + i);
+                continue;
+            }
+
+            // Check for matching tool result messages
+            java.util.Set<String> foundIds = new java.util.HashSet<>();
+            for (int j = i + 1; j < messagesArray.size(); j++) {
+                JsonObject resultMsg = messagesArray.get(j).getAsJsonObject();
+                String role = getStringField(resultMsg, "role");
+                if ("tool".equals(role)) {
+                    String tcId = getStringField(resultMsg, "tool_call_id");
+                    if (tcId != null) foundIds.add(tcId);
+                } else if ("assistant".equals(role) || "user".equals(role)) {
+                    break;
+                }
+            }
+
+            java.util.List<String> missingIds = new java.util.ArrayList<>();
+            for (String id : expectedIds) {
+                if (!foundIds.contains(id)) {
+                    missingIds.add(id);
+                }
+            }
+
+            if (missingIds.isEmpty()) continue;
+
+            if (missingIds.size() == expectedIds.size()) {
+                msg.remove("tool_calls");
+                ghidra.util.Msg.warn(this, "Payload sanitization: removed orphaned tool_calls at message " + i +
+                    " (no matching results for " + expectedIds.size() + " tool calls)");
+            } else {
+                // Insert placeholder results for missing IDs
+                for (String missingId : missingIds) {
+                    JsonObject placeholder = new JsonObject();
+                    placeholder.addProperty("role", "tool");
+                    placeholder.addProperty("tool_call_id", missingId);
+                    placeholder.addProperty("content", "Error: Tool execution result was lost.");
+                    messagesArray.add(placeholder);
+                    ghidra.util.Msg.warn(this, "Payload sanitization: inserted placeholder for tool_call_id=" + missingId);
+                }
+                reorderToolResults(messagesArray);
+            }
+        }
+    }
+
+    /**
+     * Reorder messages so tool results immediately follow their assistant message.
+     */
+    private void reorderToolResults(JsonArray messagesArray) {
+        java.util.List<JsonObject> ordered = new java.util.ArrayList<>();
+        for (int i = 0; i < messagesArray.size(); i++) {
+            ordered.add(messagesArray.get(i).getAsJsonObject());
+        }
+
+        java.util.List<JsonObject> result = new java.util.ArrayList<>();
+        java.util.Set<Integer> processed = new java.util.HashSet<>();
+
+        for (int i = 0; i < ordered.size(); i++) {
+            if (processed.contains(i)) continue;
+            JsonObject msg = ordered.get(i);
+            result.add(msg);
+            processed.add(i);
+
+            if ("assistant".equals(getStringField(msg, "role")) &&
+                msg.has("tool_calls") && !msg.get("tool_calls").isJsonNull()) {
+
+                JsonArray toolCalls;
+                try {
+                    toolCalls = msg.getAsJsonArray("tool_calls");
+                } catch (Exception e) {
+                    continue;
+                }
+                java.util.Set<String> tcIds = new java.util.HashSet<>();
+                for (int tc = 0; tc < toolCalls.size(); tc++) {
+                    String id = getStringField(toolCalls.get(tc).getAsJsonObject(), "id");
+                    if (id != null) tcIds.add(id);
+                }
+
+                for (int j = 0; j < ordered.size(); j++) {
+                    if (processed.contains(j)) continue;
+                    JsonObject candidate = ordered.get(j);
+                    if ("tool".equals(getStringField(candidate, "role"))) {
+                        String candidateId = getStringField(candidate, "tool_call_id");
+                        if (candidateId != null && tcIds.contains(candidateId)) {
+                            result.add(candidate);
+                            processed.add(j);
+                        }
+                    }
+                }
+            }
+        }
+
+        while (messagesArray.size() > 0) {
+            messagesArray.remove(0);
+        }
+        for (JsonObject msg : result) {
+            messagesArray.add(msg);
+        }
+    }
+
+    /**
+     * Safely extract a string field from a JsonObject.
+     */
+    private String getStringField(JsonObject obj, String field) {
+        if (obj.has(field)) {
+            JsonElement el = obj.get(field);
+            if (el != null && !el.isJsonNull() && el.isJsonPrimitive()) {
+                return el.getAsString();
+            }
+        }
+        return null;
     }
 
     private String extractContentFromResponse(JsonObject responseObj) {

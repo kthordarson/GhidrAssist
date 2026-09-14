@@ -26,8 +26,8 @@ public class SchemaVersionDetector {
     /** Graph-RAG with security columns, without user_edited */
     public static final int VERSION_GRAPHRAG_SECURITY = 3;
 
-    /** Current full schema with user_edited column */
-    public static final int VERSION_CURRENT = 4;
+    /** Current full schema with canonical per-message chat history */
+    public static final int VERSION_CURRENT = 14;
 
     private final Connection connection;
 
@@ -110,7 +110,19 @@ public class SchemaVersionDetector {
             return VERSION_GRAPHRAG_SECURITY;
         }
 
-        return VERSION_CURRENT;
+        if (!tableExists("GHDocumentChatMetadata")) {
+            return 7;
+        }
+
+        if (!graphNodeColumns.contains("signature")) {
+            return 8;
+        }
+
+        if (!graphNodeColumns.contains("category")) {
+            return 9;
+        }
+
+        return 10;
     }
 
     /**

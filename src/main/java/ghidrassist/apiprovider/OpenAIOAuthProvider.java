@@ -4,6 +4,8 @@ import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import com.google.gson.stream.JsonReader;
 import ghidra.util.Msg;
 import ghidrassist.LlmApi.LlmResponseHandler;
 import ghidrassist.apiprovider.capabilities.FunctionCallingProvider;
@@ -15,10 +17,12 @@ import okio.BufferedSource;
 
 import javax.net.ssl.*;
 import java.io.IOException;
+import java.io.StringReader;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * OpenAI OAuth Provider - Uses OAuth authentication for ChatGPT Pro/Plus subscriptions.
@@ -46,8 +50,10 @@ public class OpenAIOAuthProvider extends APIProvider implements FunctionCallingP
     private static final Gson gson = new Gson();
     private static final MediaType JSON = MediaType.get("application/json");
     
-    // Codex API endpoint
-    private static final String CODEX_API_ENDPOINT = "https://chatgpt.com/backend-api/codex/responses";
+    private static final String CODEX_API_BASE_URL = "https://chatgpt.com/backend-api/codex";
+    private static final String CODEX_RESPONSES_ENDPOINT = "responses";
+    private static final String CODEX_MODELS_ENDPOINT = "models";
+    private static final String CODEX_MODELS_CLIENT_VERSION = "0.116.0";
     
     // Default model
     private static final String DEFAULT_MODEL = "gpt-5.1-codex";
@@ -67,10 +73,11 @@ public class OpenAIOAuthProvider extends APIProvider implements FunctionCallingP
      * @param timeout Timeout in seconds
      */
     public OpenAIOAuthProvider(String name, String model, Integer maxTokens, String url,
-                               String key, boolean disableTlsVerification, Integer timeout) {
+                               String key, boolean disableTlsVerification, boolean bypassProxy, Integer timeout) {
         super(name, ProviderType.OPENAI_OAUTH, 
               model != null && !model.isEmpty() ? model : DEFAULT_MODEL,
-              maxTokens, CODEX_API_ENDPOINT, key, disableTlsVerification, timeout);
+              maxTokens, url != null && !url.isEmpty() ? url : CODEX_API_BASE_URL + "/" + CODEX_RESPONSES_ENDPOINT, key,
+              disableTlsVerification, bypassProxy, timeout);
         
         // Initialize token manager with credentials from key field
         this.tokenManager = new OpenAIOAuthTokenManager(key);
@@ -98,11 +105,21 @@ public class OpenAIOAuthProvider extends APIProvider implements FunctionCallingP
     public String getCredentialsJson() {
         return tokenManager.toJson();
     }
+
+    @Override
+    public void prepareForConcurrentRequests() throws APIProviderException {
+        try {
+            tokenManager.getValidAccessToken();
+            persistCredentialsIfUpdated();
+        } catch (IOException e) {
+            throw handleNetworkError(e, "prepareForConcurrentRequests");
+        }
+    }
     
     @Override
     protected OkHttpClient buildClient() {
         try {
-            OkHttpClient.Builder builder = new OkHttpClient.Builder()
+            OkHttpClient.Builder builder = configureClientBuilder(new OkHttpClient.Builder())
                 .connectTimeout(super.timeout)
                 .readTimeout(super.timeout)
                 .writeTimeout(super.timeout)
@@ -144,6 +161,7 @@ public class OpenAIOAuthProvider extends APIProvider implements FunctionCallingP
      */
     private Headers.Builder getCodexHeaders() throws IOException {
         String accessToken = tokenManager.getValidAccessToken();
+        persistCredentialsIfUpdated();
         
         // Match Python client header names exactly (lowercase)
         Headers.Builder headers = new Headers.Builder()
@@ -160,6 +178,119 @@ public class OpenAIOAuthProvider extends APIProvider implements FunctionCallingP
         }
         
         return headers;
+    }
+
+    private Headers getModelDiscoveryHeaders() throws IOException {
+        String accessToken = tokenManager.getValidAccessToken();
+        persistCredentialsIfUpdated();
+
+        Headers.Builder headers = new Headers.Builder()
+            .add("Authorization", "Bearer " + accessToken)
+            .add("Accept", "application/json");
+
+        String accountId = tokenManager.getAccountId();
+        if (accountId != null && !accountId.isEmpty()) {
+            headers.add("ChatGPT-Account-ID", accountId);
+        }
+
+        return headers.build();
+    }
+
+    private void persistCredentialsIfUpdated() {
+        String credentialsJson = getCredentialsJson();
+        if (credentialsJson == null || credentialsJson.isBlank() || credentialsJson.equals(this.key)) {
+            return;
+        }
+
+        if (APIProviderConfigStore.updateProviderKey(this.name, credentialsJson)) {
+            this.key = credentialsJson;
+        }
+    }
+
+    private JsonObject parseModelDiscoveryPayload(String responseBody) throws APIProviderException {
+        if (responseBody == null) {
+            throw new APIProviderException(APIProviderException.ErrorCategory.SERVICE_ERROR,
+                name, "getAvailableModels", "Model discovery returned an empty response.");
+        }
+
+        String trimmed = responseBody.trim();
+        if (trimmed.isEmpty()) {
+            throw new APIProviderException(APIProviderException.ErrorCategory.SERVICE_ERROR,
+                name, "getAvailableModels", "Model discovery returned an empty response.");
+        }
+
+        // Some backends prepend non-JSON guards or whitespace before the actual payload.
+        int objectStart = trimmed.indexOf('{');
+        int arrayStart = trimmed.indexOf('[');
+        int start = -1;
+        if (objectStart >= 0 && arrayStart >= 0) {
+            start = Math.min(objectStart, arrayStart);
+        } else if (objectStart >= 0) {
+            start = objectStart;
+        } else if (arrayStart >= 0) {
+            start = arrayStart;
+        }
+        if (start > 0) {
+            trimmed = trimmed.substring(start);
+        }
+
+        try {
+            JsonReader reader = new JsonReader(new StringReader(trimmed));
+            reader.setLenient(true);
+            JsonElement parsed = JsonParser.parseReader(reader);
+
+            if (parsed.isJsonObject()) {
+                return parsed.getAsJsonObject();
+            }
+
+            if (parsed.isJsonPrimitive() && parsed.getAsJsonPrimitive().isString()) {
+                String nested = parsed.getAsString();
+                JsonReader nestedReader = new JsonReader(new StringReader(nested));
+                nestedReader.setLenient(true);
+                JsonElement nestedParsed = JsonParser.parseReader(nestedReader);
+                if (nestedParsed.isJsonObject()) {
+                    return nestedParsed.getAsJsonObject();
+                }
+            }
+        } catch (Exception e) {
+            throw new APIProviderException(APIProviderException.ErrorCategory.SERVICE_ERROR,
+                name, "getAvailableModels",
+                "Failed to parse model discovery response: " + e.getMessage());
+        }
+
+        throw new APIProviderException(APIProviderException.ErrorCategory.SERVICE_ERROR,
+            name, "getAvailableModels",
+            "Model discovery returned an unexpected payload.");
+    }
+
+    private String getApiBaseUrl() {
+        String configuredUrl = this.url != null ? this.url.trim() : "";
+        if (configuredUrl.isEmpty()) {
+            return CODEX_API_BASE_URL;
+        }
+
+        String normalized = configuredUrl.endsWith("/") ? configuredUrl.substring(0, configuredUrl.length() - 1) : configuredUrl;
+        if ("https://chatgpt.com".equalsIgnoreCase(normalized)
+                || "http://chatgpt.com".equalsIgnoreCase(normalized)
+                || "https://www.chatgpt.com".equalsIgnoreCase(normalized)
+                || "http://www.chatgpt.com".equalsIgnoreCase(normalized)) {
+            return CODEX_API_BASE_URL;
+        }
+        if (normalized.endsWith("/" + CODEX_RESPONSES_ENDPOINT)) {
+            return normalized.substring(0, normalized.length() - (CODEX_RESPONSES_ENDPOINT.length() + 1));
+        }
+        if (normalized.endsWith("/" + CODEX_MODELS_ENDPOINT)) {
+            return normalized.substring(0, normalized.length() - (CODEX_MODELS_ENDPOINT.length() + 1));
+        }
+        return normalized;
+    }
+
+    private String getResponsesEndpoint() {
+        return getApiBaseUrl() + "/" + CODEX_RESPONSES_ENDPOINT;
+    }
+
+    private String getModelsEndpoint() {
+        return getApiBaseUrl() + "/" + CODEX_MODELS_ENDPOINT + "?client_version=" + CODEX_MODELS_CLIENT_VERSION;
     }
     
     // =========================================================================
@@ -230,10 +361,19 @@ public class OpenAIOAuthProvider extends APIProvider implements FunctionCallingP
                             : null;
 
                         String callId = null;
-                        if (toolCall.has("id")) {
-                            callId = toolCall.get("id").getAsString();
-                        } else if (toolCall.has("call_id")) {
-                            callId = toolCall.get("call_id").getAsString();
+                        if (toolCall.has("id") && !toolCall.get("id").isJsonNull()) {
+                            try {
+                                callId = toolCall.get("id").getAsString();
+                            } catch (Exception e) {
+                                // id exists but isn't a string primitive
+                            }
+                        }
+                        if (callId == null && toolCall.has("call_id") && !toolCall.get("call_id").isJsonNull()) {
+                            try {
+                                callId = toolCall.get("call_id").getAsString();
+                            } catch (Exception e) {
+                                // call_id exists but isn't a string primitive
+                            }
                         }
 
                         String name = null;
@@ -288,15 +428,15 @@ public class OpenAIOAuthProvider extends APIProvider implements FunctionCallingP
             }
 
             if (ChatMessage.ChatMessageRole.TOOL.equals(role) || ChatMessage.ChatMessageRole.FUNCTION.equals(role)) {
-                if (content == null || content.isEmpty()) {
-                    continue;
-                }
+                // Always emit tool results - dropping them creates orphaned function_call items
+                // which causes API 400 errors. Use empty string if content is null.
+                String outputContent = (content != null && !content.isEmpty()) ? content : "";
                 JsonObject item = new JsonObject();
                 item.addProperty("type", "function_call_output");
                 if (message.getToolCallId() != null && !message.getToolCallId().isEmpty()) {
                     item.addProperty("call_id", message.getToolCallId());
                 }
-                item.addProperty("output", content);
+                item.addProperty("output", outputContent);
                 inputItems.add(item);
             }
         }
@@ -368,7 +508,8 @@ public class OpenAIOAuthProvider extends APIProvider implements FunctionCallingP
                 JsonArray content = item.has("content") ? item.getAsJsonArray("content") : new JsonArray();
                 for (JsonElement partElement : content) {
                     JsonObject part = partElement.getAsJsonObject();
-                    if ("output_text".equals(part.has("type") ? part.get("type").getAsString() : "")) {
+                    String partType = part.has("type") ? part.get("type").getAsString() : "";
+                    if ("output_text".equals(partType) || "text".equals(partType)) {
                         if (part.has("text")) {
                             textContent.append(part.get("text").getAsString());
                         }
@@ -383,7 +524,16 @@ public class OpenAIOAuthProvider extends APIProvider implements FunctionCallingP
                 
                 JsonObject function = new JsonObject();
                 function.addProperty("name", item.get("name").getAsString());
-                function.addProperty("arguments", item.get("arguments").getAsString());
+                JsonElement arguments = item.get("arguments");
+                if (arguments != null && !arguments.isJsonNull()) {
+                    if (arguments.isJsonPrimitive() && arguments.getAsJsonPrimitive().isString()) {
+                        function.addProperty("arguments", arguments.getAsString());
+                    } else {
+                        function.addProperty("arguments", gson.toJson(arguments));
+                    }
+                } else {
+                    function.addProperty("arguments", "{}");
+                }
                 toolCall.add("function", function);
                 
                 toolCalls.add(toolCall);
@@ -424,31 +574,16 @@ public class OpenAIOAuthProvider extends APIProvider implements FunctionCallingP
         
         try {
             // Build payload - Codex requires stream=true, we collect the response
-            JsonObject payload = buildRequestPayload(messages, null);
+            JsonObject payload = buildRequestPayload(messages, null, ToolChoiceMode.AUTO);
             Headers headers = getCodexHeaders().build();
             
             Request request = new Request.Builder()
-                .url(CODEX_API_ENDPOINT)
+                .url(getResponsesEndpoint())
                 .post(buildJsonRequestBody(payload))
                 .headers(headers)
                 .build();
             
-            try (Response response = client.newCall(request).execute()) {
-                if (response.code() == 401) {
-                    throw new AuthenticationException(name, "createChatCompletion", 401, 
-                        response.body() != null ? response.body().string() : null,
-                        "Authentication failed. Please re-authenticate.");
-                }
-                if (response.code() == 429) {
-                    throw new RateLimitException(name, "createChatCompletion", null, null);
-                }
-                if (!response.isSuccessful()) {
-                    String errorBody = response.body() != null ? response.body().string() : "";
-                    throw new APIProviderException(APIProviderException.ErrorCategory.SERVICE_ERROR,
-                        name, "createChatCompletion", 
-                        "API error " + response.code() + ": " + errorBody);
-                }
-                
+            try (Response response = executeWithRetry(request, "createChatCompletion")) {
                 // Collect streaming response (API requires stream=true)
                 JsonObject responseData = collectStreamingResponse(response);
                 ParsedResponse parsed = parseResponseContent(responseData);
@@ -471,11 +606,11 @@ public class OpenAIOAuthProvider extends APIProvider implements FunctionCallingP
         isCancelled = false;
         
         try {
-            JsonObject payload = buildRequestPayload(messages, null);
+            JsonObject payload = buildRequestPayload(messages, null, ToolChoiceMode.AUTO);
             Headers headers = getCodexHeaders().build();
             
             Request request = new Request.Builder()
-                .url(CODEX_API_ENDPOINT)
+                .url(getResponsesEndpoint())
                 .post(buildJsonRequestBody(payload))
                 .headers(headers)
                 .build();
@@ -570,6 +705,8 @@ public class OpenAIOAuthProvider extends APIProvider implements FunctionCallingP
      */
     private JsonObject collectStreamingResponse(Response response) throws IOException {
         JsonObject finalResponse = new JsonObject();
+        JsonArray outputItems = new JsonArray();
+        int outputItemCount = 0;
         
         try (ResponseBody body = response.body()) {
             if (body == null) return finalResponse;
@@ -589,19 +726,34 @@ public class OpenAIOAuthProvider extends APIProvider implements FunctionCallingP
                     try {
                         JsonObject event = gson.fromJson(data, JsonObject.class);
                         String eventType = event.has("type") ? event.get("type").getAsString() : "";
-                        
-                        // Capture the final response
-                        if ("response.completed".equals(eventType) || "response.done".equals(eventType)) {
+
+                        if ("response.output_item.done".equals(eventType) && event.has("item")) {
+                            outputItems.add(event.get("item").deepCopy());
+                            outputItemCount++;
+                        } else if ("response.completed".equals(eventType) || "response.done".equals(eventType)) {
                             if (event.has("response")) {
                                 finalResponse = event.getAsJsonObject("response");
                             }
+                        } else if ("response.incomplete".equals(eventType) && event.has("response")) {
+                            finalResponse = event.getAsJsonObject("response");
+                        } else if ("response.failed".equals(eventType) && event.has("response")) {
+                            finalResponse = event.getAsJsonObject("response");
                         }
                     } catch (Exception e) {
-                        // Skip malformed events
+                        Msg.debug(this, "Skipping malformed SSE event while collecting response: " + e.getMessage());
                     }
                 }
             }
         }
+
+        if (!outputItems.isEmpty()) {
+            finalResponse.add("output", outputItems);
+        }
+        if (!finalResponse.has("status")) {
+            finalResponse.addProperty("status", outputItemCount > 0 ? "completed" : "unknown");
+        }
+        Msg.info(this, "Collected OAuth Responses SSE stream: output_items=" + outputItemCount
+            + ", status=" + (finalResponse.has("status") ? finalResponse.get("status").getAsString() : "missing"));
         
         return finalResponse;
     }
@@ -614,34 +766,33 @@ public class OpenAIOAuthProvider extends APIProvider implements FunctionCallingP
     public String createChatCompletionWithFunctions(List<ChatMessage> messages,
                                                     List<Map<String, Object>> functions) 
             throws APIProviderException {
+        return createChatCompletionWithFunctions(messages, functions, ToolChoiceMode.AUTO);
+    }
+
+    @Override
+    public String createChatCompletionWithFunctions(List<ChatMessage> messages,
+                                                    List<Map<String, Object>> functions,
+                                                    ToolChoiceMode toolChoiceMode)
+            throws APIProviderException {
         if (!isAuthenticated()) {
             throw new AuthenticationException(name, "createChatCompletionWithFunctions", 401, null,
                 "Not authenticated. Please authenticate via Settings > Edit Provider > Authenticate.");
         }
         
         try {
-            JsonObject payload = buildRequestPayload(messages, functions);
+            JsonObject payload = buildRequestPayload(messages, functions, toolChoiceMode);
+            Msg.info(this, "Submitting OAuth Responses function request: input_items="
+                + payload.getAsJsonArray("input").size() + ", tools="
+                + (functions != null ? functions.size() : 0) + ", model=" + this.model);
             Headers headers = getCodexHeaders().build();
             
             Request request = new Request.Builder()
-                .url(CODEX_API_ENDPOINT)
+                .url(getResponsesEndpoint())
                 .post(buildJsonRequestBody(payload))
                 .headers(headers)
                 .build();
             
-            try (Response response = client.newCall(request).execute()) {
-                if (response.code() == 401) {
-                    throw new AuthenticationException(name, "createChatCompletionWithFunctions", 401, 
-                        response.body() != null ? response.body().string() : null,
-                        "Authentication failed. Please re-authenticate.");
-                }
-                if (!response.isSuccessful()) {
-                    String errorBody = response.body() != null ? response.body().string() : "";
-                    throw new APIProviderException(APIProviderException.ErrorCategory.SERVICE_ERROR,
-                        name, "createChatCompletionWithFunctions", 
-                        "API error " + response.code() + ": " + errorBody);
-                }
-                
+            try (Response response = executeWithRetry(request, "createChatCompletionWithFunctions")) {
                 JsonObject responseData = collectStreamingResponse(response);
                 ParsedResponse parsed = parseResponseContent(responseData);
                 
@@ -659,36 +810,35 @@ public class OpenAIOAuthProvider extends APIProvider implements FunctionCallingP
     public String createChatCompletionWithFunctionsFullResponse(List<ChatMessage> messages,
                                                                 List<Map<String, Object>> functions)
             throws APIProviderException {
+        return createChatCompletionWithFunctionsFullResponse(messages, functions, ToolChoiceMode.AUTO);
+    }
+
+    @Override
+    public String createChatCompletionWithFunctionsFullResponse(List<ChatMessage> messages,
+                                                                List<Map<String, Object>> functions,
+                                                                ToolChoiceMode toolChoiceMode)
+            throws APIProviderException {
         if (!isAuthenticated()) {
             throw new AuthenticationException(name, "createChatCompletionWithFunctionsFullResponse", 401, null,
                 "Not authenticated. Please authenticate via Settings > Edit Provider > Authenticate.");
         }
         
         try {
-            JsonObject payload = buildRequestPayload(messages, functions);
+            JsonObject payload = buildRequestPayload(messages, functions, toolChoiceMode);
             Headers headers = getCodexHeaders().build();
             
             Request request = new Request.Builder()
-                .url(CODEX_API_ENDPOINT)
+                .url(getResponsesEndpoint())
                 .post(buildJsonRequestBody(payload))
                 .headers(headers)
                 .build();
             
-            try (Response response = client.newCall(request).execute()) {
-                if (response.code() == 401) {
-                    throw new AuthenticationException(name, "createChatCompletionWithFunctionsFullResponse", 401, 
-                        response.body() != null ? response.body().string() : null,
-                        "Authentication failed. Please re-authenticate.");
-                }
-                if (!response.isSuccessful()) {
-                    String errorBody = response.body() != null ? response.body().string() : "";
-                    throw new APIProviderException(APIProviderException.ErrorCategory.SERVICE_ERROR,
-                        name, "createChatCompletionWithFunctionsFullResponse", 
-                        "API error " + response.code() + ": " + errorBody);
-                }
-                
+            try (Response response = executeWithRetry(request, "createChatCompletionWithFunctionsFullResponse")) {
                 JsonObject responseData = collectStreamingResponse(response);
                 ParsedResponse parsed = parseResponseContent(responseData);
+                ghidra.util.Msg.info(this, "OpenAI OAuth parsed function response: finish_reason="
+                    + parsed.finishReason() + ", tool_calls=" + parsed.toolCalls().size()
+                    + ", text_length=" + (parsed.textContent() != null ? parsed.textContent().length() : 0));
                 
                 // Convert to OpenAI Chat Completions format
                 JsonObject fullResponse = new JsonObject();
@@ -700,9 +850,7 @@ public class OpenAIOAuthProvider extends APIProvider implements FunctionCallingP
                 
                 if (!parsed.toolCalls().isEmpty()) {
                     message.add("tool_calls", parsed.toolCalls());
-                    if (!parsed.textContent().isEmpty()) {
-                        message.addProperty("content", parsed.textContent());
-                    }
+                    message.addProperty("content", parsed.textContent().isEmpty() ? "" : parsed.textContent());
                 } else {
                     message.addProperty("content", parsed.textContent());
                 }
@@ -733,10 +881,13 @@ public class OpenAIOAuthProvider extends APIProvider implements FunctionCallingP
      * Builds request payload in OpenAI Responses API format.
      * CRITICAL: Codex API requires store=false AND stream=true.
      */
-    private JsonObject buildRequestPayload(List<ChatMessage> messages, List<Map<String, Object>> tools) {
+    private JsonObject buildRequestPayload(List<ChatMessage> messages, List<Map<String, Object>> tools,
+                                           ToolChoiceMode toolChoiceMode) {
         JsonObject payload = new JsonObject();
         payload.addProperty("model", this.model);
-        payload.add("input", translateMessagesToInput(messages));
+        JsonArray input = translateMessagesToInput(messages);
+        sanitizeResponsesApiInput(input);
+        payload.add("input", input);
         payload.addProperty("instructions", CodexInstructions.INSTRUCTIONS);
         payload.addProperty("store", false);
         payload.addProperty("stream", true);  // REQUIRED by Codex API
@@ -744,9 +895,64 @@ public class OpenAIOAuthProvider extends APIProvider implements FunctionCallingP
         // Add tools if present
         if (tools != null && !tools.isEmpty()) {
             payload.add("tools", translateToolsToFormat(tools));
+            ToolChoiceMode resolvedMode = toolChoiceMode != null ? toolChoiceMode : ToolChoiceMode.AUTO;
+            String toolChoice = resolvedMode.toOpenAIToolChoice(messages);
+            payload.addProperty("tool_choice", toolChoice);
+            payload.addProperty("parallel_tool_calls", true);
+            Msg.info(this, "OAuth Responses tool_choice=" + toolChoice
+                + " for " + tools.size() + " tools");
         }
         
         return payload;
+    }
+
+    /**
+     * Sanitize the Responses API input array to prevent orphaned function_call items.
+     * For each function_call, verifies a matching function_call_output exists.
+     * If not, removes the function_call or inserts a placeholder output.
+     */
+    private void sanitizeResponsesApiInput(JsonArray inputItems) {
+        // Collect all function_call items and their call_ids
+        java.util.Map<String, Integer> functionCallIds = new java.util.LinkedHashMap<>();
+        java.util.Set<String> functionCallOutputIds = new java.util.HashSet<>();
+
+        for (int i = 0; i < inputItems.size(); i++) {
+            JsonObject item = inputItems.get(i).getAsJsonObject();
+            String type = null;
+            if (item.has("type") && !item.get("type").isJsonNull()) {
+                type = item.get("type").getAsString();
+            }
+            if ("function_call".equals(type)) {
+                String callId = null;
+                if (item.has("call_id") && !item.get("call_id").isJsonNull()) {
+                    callId = item.get("call_id").getAsString();
+                }
+                if (callId != null && !callId.isEmpty()) {
+                    functionCallIds.put(callId, i);
+                }
+            } else if ("function_call_output".equals(type)) {
+                String callId = null;
+                if (item.has("call_id") && !item.get("call_id").isJsonNull()) {
+                    callId = item.get("call_id").getAsString();
+                }
+                if (callId != null) {
+                    functionCallOutputIds.add(callId);
+                }
+            }
+        }
+
+        // Find orphaned function_calls (no matching output)
+        for (java.util.Map.Entry<String, Integer> entry : functionCallIds.entrySet()) {
+            if (!functionCallOutputIds.contains(entry.getKey())) {
+                // Insert a placeholder function_call_output
+                JsonObject placeholder = new JsonObject();
+                placeholder.addProperty("type", "function_call_output");
+                placeholder.addProperty("call_id", entry.getKey());
+                placeholder.addProperty("output", "Error: Tool execution result was lost.");
+                inputItems.add(placeholder);
+                ghidra.util.Msg.warn(this, "Payload sanitization: inserted placeholder function_call_output for call_id=" + entry.getKey());
+            }
+        }
     }
 
     private RequestBody buildJsonRequestBody(JsonObject payload) {
@@ -760,14 +966,48 @@ public class OpenAIOAuthProvider extends APIProvider implements FunctionCallingP
     
     @Override
     public List<String> getAvailableModels() throws APIProviderException {
-        // Return commonly available Codex models
-        // The API will reject invalid models for the user's subscription
-        List<String> models = new ArrayList<>();
-        models.add("gpt-5.1-codex");
-        models.add("gpt-4.1-codex");
-        models.add("o3");
-        models.add("o4-mini");
-        return models;
+        if (!isAuthenticated()) {
+            throw new AuthenticationException(name, "getAvailableModels", 401, null,
+                "Not authenticated. Please authenticate via Settings > Edit Provider > Authenticate.");
+        }
+
+        try {
+            Headers headers = getModelDiscoveryHeaders();
+
+            Request request = new Request.Builder()
+                .url(getModelsEndpoint())
+                .get()
+                .headers(headers)
+                .build();
+
+            try (Response response = executeWithRetry(request, "getAvailableModels")) {
+                String responseBody = response.body() != null ? response.body().string() : "{}";
+                JsonObject responseObj = parseModelDiscoveryPayload(responseBody);
+                JsonArray data = responseObj.has("models") && responseObj.get("models").isJsonArray()
+                    ? responseObj.getAsJsonArray("models")
+                    : new JsonArray();
+                List<String> models = new ArrayList<>();
+
+                for (JsonElement element : data) {
+                    if (!element.isJsonObject()) {
+                        continue;
+                    }
+                    JsonObject modelObj = element.getAsJsonObject();
+                    if (modelObj.has("slug") && !modelObj.get("slug").isJsonNull()) {
+                        models.add(modelObj.get("slug").getAsString());
+                    }
+                }
+
+                models = models.stream().distinct().collect(Collectors.toList());
+                if (models.isEmpty()) {
+                    throw new APIProviderException(APIProviderException.ErrorCategory.SERVICE_ERROR,
+                        name, "getAvailableModels", "No available models were returned by the API.");
+                }
+                return models;
+            }
+        } catch (IOException e) {
+            throw handleNetworkError(e, "getAvailableModels");
+        }
     }
     
     @Override

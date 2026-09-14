@@ -118,9 +118,12 @@ public class ActionAnalysisService {
     private void applyAction(DefaultTableModel model, int row, Program program, Address address) {
         String action = model.getValueAt(row, 1).toString().replace(" ", "_");
         String argumentsJson = model.getValueAt(row, 4).toString();
-        
+
         try {
-            ActionExecutor.executeAction(action, argumentsJson, program, address);
+            // Use the overload that records LLM renames for provenance tracking
+            ghidrassist.AnalysisDB analysisDB = new ghidrassist.AnalysisDB();
+            String binaryId = program.getExecutableSHA256();
+            ActionExecutor.executeAction(action, argumentsJson, program, address, analysisDB, binaryId);
             model.setValueAt("Applied", row, 3);
             model.setValueAt(Boolean.FALSE, row, 0);
         } catch (Exception e) {

@@ -343,7 +343,7 @@ public class TaintAnalyzer {
         List<KnowledgeNode> sources = new ArrayList<>();
 
         for (KnowledgeNode node : graph.getNodesByType(NodeType.FUNCTION)) {
-            // Check security flags
+            // Tier 1: Check security flags
             List<String> flags = node.getSecurityFlags();
             if (flags != null) {
                 for (String flag : flags) {
@@ -354,18 +354,44 @@ public class TaintAnalyzer {
                 }
             }
 
-            // Check if function name is a known source
+            // Tier 2: Check pre-extracted API lists from SecurityFeatureExtractor
+            if (!sources.contains(node)) {
+                List<String> netAPIs = node.getNetworkAPIs();
+                if (netAPIs != null) {
+                    for (String api : netAPIs) {
+                        if (TAINT_SOURCES.contains(api) || TAINT_SOURCES.contains(normalizeFunctionName(api))) {
+                            sources.add(node);
+                            break;
+                        }
+                    }
+                }
+            }
+            if (!sources.contains(node)) {
+                List<String> fileAPIs = node.getFileIOAPIs();
+                if (fileAPIs != null) {
+                    for (String api : fileAPIs) {
+                        if (TAINT_SOURCES.contains(api) || TAINT_SOURCES.contains(normalizeFunctionName(api))) {
+                            sources.add(node);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // Tier 3: Check if function name is a known source (with normalization)
             String name = node.getName();
-            if (name != null && TAINT_SOURCES.contains(name)) {
-                if (!sources.contains(node)) {
+            if (name != null && !sources.contains(node)) {
+                if (TAINT_SOURCES.contains(name) || TAINT_SOURCES.contains(normalizeFunctionName(name))) {
                     sources.add(node);
                 }
             }
 
-            // Check callees for taint source functions
+            // Tier 4: Check callees for taint source functions (with normalization)
             if (!sources.contains(node)) {
                 for (KnowledgeNode callee : graph.getCallees(node.getId())) {
-                    if (callee.getName() != null && TAINT_SOURCES.contains(callee.getName())) {
+                    String calleeName = callee.getName();
+                    if (calleeName != null &&
+                        (TAINT_SOURCES.contains(calleeName) || TAINT_SOURCES.contains(normalizeFunctionName(calleeName)))) {
                         sources.add(node);
                         break;
                     }
@@ -383,7 +409,7 @@ public class TaintAnalyzer {
         List<KnowledgeNode> sinks = new ArrayList<>();
 
         for (KnowledgeNode node : graph.getNodesByType(NodeType.FUNCTION)) {
-            // Check security flags
+            // Tier 1: Check security flags
             List<String> flags = node.getSecurityFlags();
             if (flags != null) {
                 for (String flag : flags) {
@@ -394,18 +420,44 @@ public class TaintAnalyzer {
                 }
             }
 
-            // Check if function name is a known sink
+            // Tier 2: Check pre-extracted API lists from SecurityFeatureExtractor
+            if (!sinks.contains(node)) {
+                List<String> netAPIs = node.getNetworkAPIs();
+                if (netAPIs != null) {
+                    for (String api : netAPIs) {
+                        if (TAINT_SINKS.contains(api) || TAINT_SINKS.contains(normalizeFunctionName(api))) {
+                            sinks.add(node);
+                            break;
+                        }
+                    }
+                }
+            }
+            if (!sinks.contains(node)) {
+                List<String> fileAPIs = node.getFileIOAPIs();
+                if (fileAPIs != null) {
+                    for (String api : fileAPIs) {
+                        if (TAINT_SINKS.contains(api) || TAINT_SINKS.contains(normalizeFunctionName(api))) {
+                            sinks.add(node);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // Tier 3: Check if function name is a known sink (with normalization)
             String name = node.getName();
-            if (name != null && TAINT_SINKS.contains(name)) {
-                if (!sinks.contains(node)) {
+            if (name != null && !sinks.contains(node)) {
+                if (TAINT_SINKS.contains(name) || TAINT_SINKS.contains(normalizeFunctionName(name))) {
                     sinks.add(node);
                 }
             }
 
-            // Check callees for taint sink functions
+            // Tier 4: Check callees for taint sink functions (with normalization)
             if (!sinks.contains(node)) {
                 for (KnowledgeNode callee : graph.getCallees(node.getId())) {
-                    if (callee.getName() != null && TAINT_SINKS.contains(callee.getName())) {
+                    String calleeName = callee.getName();
+                    if (calleeName != null &&
+                        (TAINT_SINKS.contains(calleeName) || TAINT_SINKS.contains(normalizeFunctionName(calleeName)))) {
                         sinks.add(node);
                         break;
                     }
