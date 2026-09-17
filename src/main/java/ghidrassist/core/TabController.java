@@ -193,14 +193,21 @@ public class TabController {
             if (this.queryTab == null || sessionId != queryService.getCurrentSessionId()) {
                 return;
             }
-            SwingUtilities.invokeLater(() -> {
-                if (currentStreamingRenderer != null) {
-                    queryTab.updateStreamingPrefix(queryService.getConversationPrefixHtml());
-                    queryTab.setEditEnabled(queryService.canEditLatestAssistantResponse());
-                } else {
-                    renderCurrentChatSession();
-                }
-            });
+            // Compute the (potentially expensive, JDBC-backed) transcript HTML on the calling
+            // thread -- typically the background tool-execution thread -- and only marshal the
+            // resulting strings to the EDT. Doing the full session load+render inside
+            // invokeLater blocked the EDT for longer and longer as a session grew, since this
+            // fires on every tool-call lifecycle event.
+            if (currentStreamingRenderer != null) {
+                String prefixHtml = queryService.getConversationPrefixHtml();
+                boolean editEnabled = queryService.canEditLatestAssistantResponse();
+                SwingUtilities.invokeLater(() -> {
+                    queryTab.updateStreamingPrefix(prefixHtml);
+                    queryTab.setEditEnabled(editEnabled);
+                });
+            } else {
+                renderChatSessionSnapshot();
+            }
         });
         if (this.queryTab != null) {
             this.queryTab.setContextStatus(queryService.getContextStatusText());
@@ -1816,6 +1823,36 @@ public class TabController {
             queryService.hasActiveProgram(),
             queryService.isAcceptAllToolsEnabled());
         queryTab.setPendingApproval(queryService.getCurrentPendingApprovalView());
+    }
+
+    /**
+     * Same effect as {@link #renderCurrentChatSession()}, but safe to call from a
+     * background thread: the JDBC-backed transcript load/render and other queryService
+     * reads happen on the calling thread, and only the resulting Swing updates are
+     * marshalled onto the EDT.
+     */
+    private void renderChatSessionSnapshot() {
+        if (queryTab == null) {
+            return;
+        }
+        String responseHtml = queryService.getConversationDisplayHtml();
+        String markdownSource = queryService.getConversationHistory();
+        boolean editEnabled = queryService.canEditLatestAssistantResponse();
+        String contextStatus = queryService.getContextStatusText();
+        boolean hasActiveProgram = queryService.hasActiveProgram();
+        boolean acceptAllToolsEnabled = queryService.isAcceptAllToolsEnabled();
+        QueryService.PendingApprovalView pendingApproval = queryService.getCurrentPendingApprovalView();
+        SwingUtilities.invokeLater(() -> {
+            if (queryTab == null) {
+                return;
+            }
+            queryTab.setResponseText(responseHtml);
+            queryTab.setMarkdownSource(markdownSource);
+            queryTab.setEditEnabled(editEnabled);
+            queryTab.setContextStatus(contextStatus);
+            queryTab.setAcceptAllToolsState(hasActiveProgram, acceptAllToolsEnabled);
+            queryTab.setPendingApproval(pendingApproval);
+        });
     }
 
     private String sanitizeAssistantResponseForTranscript(String rawResponse) {
