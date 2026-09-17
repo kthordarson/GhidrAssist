@@ -83,6 +83,8 @@ public class QueryService {
     private volatile ContextUsageSnapshot contextUsageSnapshot = ContextUsageSnapshot.empty();
     private final AtomicLong contextTrackingGeneration = new AtomicLong(0);
     private volatile long activeContextTrackingGeneration = 0;
+    private volatile int lastBackfilledSessionId = ChatSessionManager.NO_SESSION;
+    private volatile int lastBackfilledMessageCount = -1;
     private volatile Consumer<String> contextStatusConsumer;
     private volatile Consumer<PendingApprovalView> pendingApprovalConsumer;
     private volatile Consumer<Integer> transcriptUpdateConsumer;
@@ -1330,7 +1332,16 @@ public class QueryService {
             transcriptService.ensureBackfilledFromReActMessages(programHash, sessionId,
                 analysisDB.getReActMessages(programHash, sessionId));
         } else {
-            transcriptService.ensureBackfilledFromMessages(programHash, sessionId, messageStore.getMessages());
+            List<PersistedChatMessage> messages = messageStore.getMessages();
+            // Backfill does an O(n) JDBC-backed scan/link pass; skip it when nothing about
+            // the message list has changed since the last pass (e.g. repeated tool-call
+            // lifecycle notifications during a ReAct run) to avoid blocking the EDT.
+            if (sessionId == lastBackfilledSessionId && messages.size() == lastBackfilledMessageCount) {
+                return;
+            }
+            transcriptService.ensureBackfilledFromMessages(programHash, sessionId, messages);
+            lastBackfilledSessionId = sessionId;
+            lastBackfilledMessageCount = messages.size();
         }
     }
 

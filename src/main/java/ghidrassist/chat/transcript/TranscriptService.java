@@ -127,7 +127,9 @@ public class TranscriptService implements ToolExecutionObserver {
                 message.getDbId(), message.getOrder());
             if (matchedIndex >= 0) {
                 TranscriptEvent matchedEvent = conversationalEvents.get(matchedIndex);
-                if (matchedEvent.getSourceMessageId() == null || matchedEvent.getSourceMessageOrder() == null) {
+                boolean hasNewSourceInfo = message.getDbId() != null;
+                if (hasNewSourceInfo
+                    && (matchedEvent.getSourceMessageId() == null || matchedEvent.getSourceMessageOrder() == null)) {
                     updateEventSourceLink(matchedEvent.getId(), message.getDbId(), message.getOrder());
                     conversationalEvents.set(matchedIndex, new TranscriptEvent(
                         matchedEvent.getId(),
@@ -146,8 +148,7 @@ public class TranscriptService implements ToolExecutionObserver {
                         message.getOrder(),
                         matchedEvent.getCreatedAt()
                     ));
-                    Msg.info(this, "Linked transcript event " + matchedEvent.getId()
-                        + " to message " + message.getDbId() + " (order=" + message.getOrder() + ")");
+                    Msg.info(this, "Linked transcript event " + matchedEvent.getId() + " to message " + message.getDbId() + " (order=" + message.getOrder() + ")");
                 }
                 removeLaterSourceLinkedDuplicates(sessionId, conversationalEvents, matchedIndex,
                     kind, message.getContent(), message.getDbId(), message.getOrder());
