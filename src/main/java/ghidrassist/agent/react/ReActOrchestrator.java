@@ -314,7 +314,7 @@ public class ReActOrchestrator {
                     todoManager.formatForPrompt(),
                     todoManager.getAllTodos(),
                     todoManager.toCompactString());
-                List<Map<String, Object>> tools = getToolsAsFunction();
+                List<Map<String, Object>> tools = getToolsAsFunction(query);
                 AtomicInteger iteration = new AtomicInteger(0);
                 AtomicInteger toolCallCount = new AtomicInteger(0);
                 runReActIteration(

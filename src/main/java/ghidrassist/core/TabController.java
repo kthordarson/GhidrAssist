@@ -2065,6 +2065,7 @@ public class TabController {
         return new LlmApi.LlmResponseHandler() {
             private final StringBuilder responseBuffer = new StringBuilder();
             private final Object bufferLock = new Object();
+            private Timestamp streamingAssistantTimestamp;
 
             @Override
             public void onStart() {
