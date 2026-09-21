@@ -9,12 +9,14 @@ The Settings tab configures LLM providers, MCP servers, SymGraph, and analysis o
 
 This section manages the LLM providers that power GhidrAssist.
 
+See the [recommended model families](../index.md#recommended-models) for open-weight and hosted options. Use the exact model ID from your provider's catalog or the installed tag from `ollama list`; family names such as Qwen, Sonnet, and GPT are not necessarily valid API identifiers.
+
 ### Provider Table
 
 | Column | Description |
 |--------|-------------|
 | **Name** | Display name for the provider |
-| **Model** | Model identifier (e.g., `gpt-4o`, `claude-sonnet-4-20250514`) |
+| **Model** | Exact model ID or installed tag exposed by the selected endpoint |
 | **Max Tokens** | Maximum tokens per request |
 | **URL** | API endpoint URL (may be empty for defaults) |
 | **Key** | API key (masked) |
@@ -42,6 +44,8 @@ Below the table:
 | Medium | Moderate reasoning |
 | High | Deep analysis |
 
+Opus, Sonnet, GPT, and open-weight reasoning models may expose thinking controls, depending on the selected model and provider. Reasoning ability alone does not guarantee compatibility with this control. Leave **Reasoning Effort** at **None** when unsupported.
+
 ### Provider Types
 
 | Type | Description | Auth |
@@ -64,7 +68,7 @@ Below the table:
 Common fields:
 - **Name**: Display name
 - **Type**: Provider type
-- **Model**: Model identifier
+- **Model**: Exact model ID, installed tag, or configured proxy alias
 - **Max Tokens**: Max tokens per request
 
 Type-specific fields:

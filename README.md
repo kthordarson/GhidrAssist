@@ -40,7 +40,7 @@ GhidrAssist integrates Large Language Models (LLMs) into Ghidra to provide intel
 
 **Advanced Capabilities:**
 * **Extended Thinking/Reasoning Control** - Adjust LLM reasoning depth for quality vs. speed trade-offs
-  - Support for OpenAI o1/o3/o4, Claude with extended thinking, and local reasoning models
+  - Support for GPT, Opus, Sonnet, and compatible open-weight reasoning models, depending on the model and provider
   - Configurable effort levels: Low (fast), Medium (balanced), High (thorough)
   - Per-program persistence - different binaries can use different reasoning levels
   - Provider-agnostic implementation (Anthropic, OpenAI, Azure, LiteLLM, LMStudio, Ollama)
@@ -143,21 +143,18 @@ GhidrAssist works with any OpenAI v1-compatible API. Setup details are provider-
 
 ### Recommended Models
 
-**For Agentic Mode (requires strong reasoning and tool use):**
-- **Cloud**: GPT-5.1, Claude Sonnet 4.5
-- **Local**: GPT-OSS, Llama 3.3 70B, DeepSeek-R1 70B, Qwen2.5 72B
+- **Open-weight models**: GLM, Qwen, DeepSeek, Nemotron, Gemma, and Muse are recommended families for local or self-hosted analysis. Choose an instruction-tuned, coding, or reasoning model supported by your runtime.
+- **Hosted frontier models**: Opus, Sonnet, and GPT are recommended for code analysis and complex investigations.
+- **Agentic mode and Actions**: Choose a model and serving backend with reliable native tool calling and multi-step reasoning. Extended thinking controls depend on the selected model and provider.
 
-**Models with Extended Thinking/Reasoning Support:**
-- **OpenAI**: o1-preview, o1-mini, o3-mini, o4-mini, gpt-5 (use `reasoning_effort` parameter)
-- **Anthropic**: Claude Sonnet 4.5, Claude Opus 4.5, Claude Haiku 4.5, Claude Opus 4.1/4, Claude Sonnet 4 (use `thinking.budget_tokens` parameter)
-- **Local**: openai/gpt-oss-20b via Ollama/LMStudio (supports effort levels)
+These are family names, not literal API identifiers. In Settings, enter the exact model ID or installed tag provided by your endpoint. See the [model guidance](docs/index.md#recommended-models) for selection criteria and official model resources.
 
 **Reasoning Effort Guidelines:**
-- **Low**: Quick analysis, minimal thinking tokens (~5-10s, lower cost)
-- **Medium**: Balanced reasoning depth (~15-30s, moderate cost)
-- **High**: Deep security analysis (~30-60s, 2x cost, recommended for vulnerability hunting)
+- **Low**: Quick analysis with less reasoning overhead
+- **Medium**: Balanced reasoning depth for routine investigations
+- **High**: More reasoning for difficult analysis, with higher latency and token use
 
-**Note**: Agentic mode requires models with strong function calling and multi-step reasoning capabilities. Smaller models may struggle with complex investigations. Extended thinking is optional but can significantly improve analysis quality for complex reverse engineering tasks.
+**Note**: Evaluate models on representative binaries and tool calls. Local performance depends on available memory, quantization, and context length. Extended thinking can help with complex tasks, but response time and cost vary by model and provider.
 
 ## Using GhidrAssistMCP for Tool-Based Analysis
 

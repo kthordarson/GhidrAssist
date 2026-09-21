@@ -90,7 +90,7 @@ Configure reasoning depth in [Settings](../tabs/settings-tab.md):
 | Medium | Moderate complexity |
 | High | Deep analysis |
 
-Higher levels improve quality but increase latency and cost.
+Higher levels can improve analysis quality but increase latency and token use. Opus, Sonnet, GPT, and open-weight reasoning models may expose thinking controls, depending on the selected model and provider. Leave **Reasoning Effort** at **None** when unsupported. See the [model guidance](../index.md#recommended-models) for current family recommendations and tool-calling requirements.
 
 ## Tips for Effective Queries
 

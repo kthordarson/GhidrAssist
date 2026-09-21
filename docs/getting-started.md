@@ -56,6 +56,8 @@ You need to configure at least one LLM provider.
 
 GhidrAssist supports multiple providers. Choose the one that fits your needs:
 
+Recommended open-weight families are **GLM, Qwen, DeepSeek, Nemotron, Gemma, and Muse**; hosted frontier options include **Opus, Sonnet, and GPT**. See the [model guidance](index.md#recommended-models) for selection criteria. Family names are recommendations: the **Model** field requires the exact ID or tag from your provider.
+
 ### Option 1: Ollama (Local, Free, Private)
 
 Ollama runs models locally on your machine.
@@ -71,12 +73,14 @@ curl -fsSL https://ollama.ai/install.sh | sh
 
 **Step 2: Pull a Model**
 
-```bash
-# General purpose model
-ollama pull llama3.1:8b
+Choose a model supported by your runtime from the [Ollama library](https://ollama.com/library), with memory and context requirements that fit your machine. Replace `MODEL_TAG` below with its exact tag.
 
-# Reasoning model (recommended for complex analysis)
-ollama pull gpt-oss:20b
+```bash
+# Download the selected model
+ollama pull MODEL_TAG
+
+# Find the installed tag to use in Settings
+ollama list
 
 # Start the server
 ollama serve
@@ -88,7 +92,7 @@ ollama serve
 2. Fill in:
    - **Name**: `Ollama Local`
    - **Type**: `Ollama`
-   - **Model**: `gpt-oss:20b`
+   - **Model**: The exact installed tag shown by `ollama list`
    - **URL**: `http://localhost:11434`
    - **API Key**: Leave empty
    - **Max Tokens**: `16384`
@@ -110,7 +114,7 @@ Use OpenAI models with a paid API key.
 2. Fill in:
    - **Name**: `OpenAI`
    - **Type**: `OpenAI Platform API`
-   - **Model**: `gpt-5.2-codex`
+   - **Model**: The exact GPT model ID available from your provider's model catalog
    - **URL**: Leave empty (default)
    - **API Key**: Paste your API key
    - **Max Tokens**: `20000`
@@ -132,7 +136,7 @@ Use Claude models with a paid API key.
 2. Fill in:
    - **Name**: `Anthropic Claude`
    - **Type**: `Anthropic Platform API`
-   - **Model**: `claude-sonnet-4-5`
+   - **Model**: The exact Sonnet or Opus model ID available from your provider's model catalog
    - **URL**: Leave empty (default)
    - **API Key**: Paste your API key
    - **Max Tokens**: `20000`
@@ -147,7 +151,7 @@ If you have a Claude Pro/Max or ChatGPT Pro/Plus subscription, use OAuth instead
 
 1. Click **Add** in LLM Providers
 2. Select **Type**: `Anthropic OAuth`
-3. Enter **Name** and **Model** (e.g., `claude-sonnet-4-5`)
+3. Enter **Name** and the exact **Model** ID for Sonnet or Opus supported by this provider
 4. Click **Authenticate**
 5. A browser window opens for login
 6. After authorization, credentials are saved automatically
@@ -157,7 +161,7 @@ If you have a Claude Pro/Max or ChatGPT Pro/Plus subscription, use OAuth instead
 
 1. Click **Add** in LLM Providers
 2. Select **Type**: `OpenAI OAuth`
-3. Enter **Name** and **Model** (e.g., `gpt-5.2-codex`)
+3. Enter **Name** and the exact **Model** ID for GPT supported by this provider
 4. Click **Authenticate**
 5. A browser window opens for login
 6. After authorization, credentials are saved automatically

@@ -54,7 +54,7 @@ This is useful for exploratory questions like "What does this binary do?" or "Tr
 
 ### Extended Thinking
 
-For models that support it (Claude Sonnet 4+, OpenAI o1/o3, local reasoning models), GhidrAssist provides reasoning effort control:
+GhidrAssist provides reasoning effort control for supported Opus, Sonnet, GPT, and open-weight reasoning models. Availability depends on the selected model and provider:
 
 | Level | Use Case |
 |-------|----------|
@@ -94,7 +94,7 @@ GhidrAssist supports a wide range of LLM providers:
 | **Ollama** | Local LLM inference (recommended for privacy) |
 | **LM Studio** | Local models with GUI |
 | **Open WebUI** | Self-hosted web interface |
-| **OpenAI Platform API** | GPT-5+, GPT-4o, o1, o3, o4 with API key |
+| **OpenAI Platform API** | GPT models with API key |
 | **OpenAI OAuth** | ChatGPT Pro/Plus subscription |
 | **Anthropic Platform API** | Claude models with API key |
 | **Anthropic OAuth** | Claude Pro/Max subscription |
@@ -103,9 +103,15 @@ GhidrAssist supports a wide range of LLM providers:
 
 ### Recommended Models
 
-- **Reasoning-intensive tasks**: Claude Sonnet 4+, OpenAI GPT-5.2, gpt-oss (extended thinking)
-- **General analysis**: GPT-5.2-Codex, Claude Sonnet 3.5, DeepSeek, Llama-based models
-- **Local/private analysis**: Ollama with gpt-oss, qwen2.5-coder, or codellama
+- **Open-weight models**: Start with [GLM](https://github.com/zai-org), [Qwen](https://github.com/QwenLM), [DeepSeek](https://github.com/deepseek-ai), [Nemotron](https://www.nvidia.com/en-us/ai-data-science/foundation-models/nemotron/), [Gemma](https://deepmind.google/models/gemma/), or [Muse](https://research.meta.ai/blog/introducing-muse-glimmer-open-agentic-model). Choose a current instruction-tuned, coding, or reasoning model; for Muse, select an open-weight release.
+- **Hosted frontier models**: Opus, Sonnet, and GPT are recommended for code analysis and complex investigations.
+- **Agentic mode, MCP, and Actions**: Prioritize reliable native tool calling, structured arguments, and multi-step reasoning. Verify these capabilities with the selected model and serving backend before starting a long investigation.
+- **Explain and semantic graph summaries**: Balance code understanding, instruction following, latency, and context capacity. Compare results on representative functions from your binaries.
+- **Local/private analysis**: Run open weights through a supported local or self-hosted endpoint. Choose a model and quantization that fit available memory, leaving room for decompiled code, tool results, and conversation history. Check runtime support for the selected model; a hosted API serving open weights still sends data off-machine.
+
+Recommendations use family names rather than fixed releases or parameter counts. The **Model** field still requires the exact model ID or installed tag exposed by your endpoint; family names are not necessarily valid IDs. Use `ollama list` for installed Ollama tags, or consult your provider's model catalog. For a proxy, use its configured model alias.
+
+Reasoning ability does not guarantee support for the plugin's **Reasoning Effort** control. Enable it only when the model and provider support it; otherwise leave it at **None**.
 
 ## Architecture Overview
 
