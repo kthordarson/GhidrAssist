@@ -116,7 +116,7 @@ https://github.com/user-attachments/assets/bd79474a-c82f-4083-b432-96625fef1387
 * Load a binary and launch the CodeBrowser.
 * CodeBrowser -> File -> Configure -> Miscellaneous -> Enable GhidrAssist.
 * CodeBrowser -> Window -> GhidraAssistPlugin.
-* Ensure the RLHF and RAG database paths are appropriate for your environment.
+* Ensure the Analysis DB and RAG index paths are appropriate for your environment.
 * Point the API host to your preferred API provider and set the API key.
 * (Optional) In the Analysis Options tab, set the Reasoning Effort level (None/Low/Medium/High) for models that support extended thinking.
 * Open GhidrAssist with the GhidrAssist option in the Windows menu and start exploring.

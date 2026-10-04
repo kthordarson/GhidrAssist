@@ -147,8 +147,7 @@ Configure local storage paths:
 
 | Database | Purpose | Default |
 |----------|---------|---------|
-| **Analysis DB** | Stores explanations, graph data | `ghidrassist_analysis.db` |
-| **RLHF DB** | Stores feedback data | `ghidrassist_rlhf.db` |
+| **Analysis DB** | Stores explanations, chat history, graph data and RLHF feedback | `ghidrassist_analysis.db` in Ghidra's user settings directory |
 | **RAG Index** | Lucene index directory | `ghidrassist_lucene` |
 
 ## Analysis Options Section

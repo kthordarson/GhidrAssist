@@ -1,5 +1,6 @@
 package ghidrassist;
 
+import ghidra.framework.Application;
 import ghidra.framework.preferences.Preferences;
 import ghidra.program.model.address.Address;
 import ghidra.util.Msg;
@@ -13,6 +14,7 @@ import ghidrassist.db.migration.V7_LlmRenames;
 import ghidrassist.db.migration.V9_FunctionCodeFields;
 import ghidrassist.db.migration.V10_GraphNodeCategory;
 import ghidrassist.graphrag.BinaryKnowledgeGraph;
+import java.io.File;
 import java.sql.*;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -24,7 +26,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public class AnalysisDB {
     private static final String DB_PATH_PROPERTY = "GhidrAssist.AnalysisDBPath";
-    private static final String DEFAULT_DB_PATH = "ghidrassist_analysis.db";
+    private static final String DEFAULT_DB_FILE = "ghidrassist_analysis.db";
     private Connection connection;
     private String databasePath;
 
@@ -32,8 +34,31 @@ public class AnalysisDB {
     private final Map<String, BinaryKnowledgeGraph> graphCache = new ConcurrentHashMap<>();
 
     public AnalysisDB() {
-        String dbPath = Preferences.getProperty(DB_PATH_PROPERTY, DEFAULT_DB_PATH);
-        initializeDatabase(dbPath);
+        initializeDatabase(resolveDatabasePath());
+    }
+
+    /**
+     * Resolve the configured database path to an absolute file and pin it in preferences.
+     * Relative paths used to resolve against Ghidra's launch directory, which scattered
+     * databases across directories. An existing file there is kept so no data is lost;
+     * otherwise the database lives in Ghidra's user settings directory.
+     */
+    public static synchronized String resolveDatabasePath() {
+        String configured = Preferences.getProperty(DB_PATH_PROPERTY);
+        String name = (configured == null || configured.isBlank()) ? DEFAULT_DB_FILE : configured.trim();
+        File file = new File(name);
+        if (file.isAbsolute()) {
+            return file.getPath();
+        }
+
+        File inLaunchDir = file.getAbsoluteFile();
+        File inSettingsDir = new File(Application.getUserSettingsDirectory(), name);
+        File chosen = (inLaunchDir.exists() && !inSettingsDir.exists()) ? inLaunchDir : inSettingsDir;
+
+        Preferences.setProperty(DB_PATH_PROPERTY, chosen.getAbsolutePath());
+        Preferences.store();
+        Msg.info(AnalysisDB.class, "Analysis database path pinned to " + chosen.getAbsolutePath());
+        return chosen.getAbsolutePath();
     }
 
     private void initializeDatabase(String dbPath) {
@@ -1592,6 +1617,24 @@ public class AnalysisDB {
         }
 
         return false;
+    }
+
+    /**
+     * Store RLHF feedback for a model response (1 = thumbs up, 0 = thumbs down).
+     */
+    public void storeFeedback(String modelName, String promptContext, String systemContext, String response, int feedback) {
+        String sql = "INSERT INTO feedback (model_name, prompt_context, system_context, response, feedback) "
+                + "VALUES (?, ?, ?, ?, ?)";
+        try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
+            pstmt.setString(1, modelName);
+            pstmt.setString(2, promptContext);
+            pstmt.setString(3, systemContext);
+            pstmt.setString(4, response);
+            pstmt.setInt(5, feedback);
+            pstmt.executeUpdate();
+        } catch (SQLException e) {
+            Msg.showError(this, null, "Database Error", "Failed to store feedback: " + e.getMessage());
+        }
     }
 
     /**

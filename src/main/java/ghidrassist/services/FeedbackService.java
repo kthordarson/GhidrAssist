@@ -2,7 +2,7 @@ package ghidrassist.services;
 
 import ghidrassist.GhidrAssistPlugin;
 import ghidrassist.LlmApi;
-import ghidrassist.RLHFDatabase;
+import ghidrassist.AnalysisDB;
 import ghidrassist.apiprovider.APIProviderConfig;
 
 /**
@@ -12,15 +12,15 @@ import ghidrassist.apiprovider.APIProviderConfig;
 public class FeedbackService {
     
     private final GhidrAssistPlugin plugin;
-    private final RLHFDatabase rlhfDB;
+    private final AnalysisDB analysisDB;
     
     // Cache for last interaction
     private String lastPrompt;
     private String lastResponse;
     
-    public FeedbackService(GhidrAssistPlugin plugin) {
+    public FeedbackService(GhidrAssistPlugin plugin, AnalysisDB analysisDB) {
         this.plugin = plugin;
-        this.rlhfDB = new RLHFDatabase();
+        this.analysisDB = analysisDB;
     }
     
     /**
@@ -62,7 +62,7 @@ public class FeedbackService {
         String modelName = config.getModel();
         String systemContext = llmApi.getSystemPrompt();
         
-        rlhfDB.storeFeedback(modelName, lastPrompt, systemContext, lastResponse, feedback);
+        analysisDB.storeFeedback(modelName, lastPrompt, systemContext, lastResponse, feedback);
     }
     
     /**
@@ -84,7 +84,7 @@ public class FeedbackService {
      * Get feedback statistics
      */
     public FeedbackStats getFeedbackStats() {
-        // Note: This would require extending RLHFDatabase with stats methods
+        // Note: This would require extending AnalysisDB with feedback stats methods
         // For now, return basic info
         return new FeedbackStats(hasPendingFeedback());
     }
@@ -101,15 +101,6 @@ public class FeedbackService {
      */
     public String getLastResponse() {
         return lastResponse;
-    }
-    
-    /**
-     * Close database resources
-     */
-    public void close() {
-        if (rlhfDB != null) {
-            rlhfDB.close();
-        }
     }
     
     /**

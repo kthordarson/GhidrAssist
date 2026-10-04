@@ -76,7 +76,6 @@ public class SettingsTab extends JPanel {
 
     // Database Paths section components
     private JTextField analysisDbPathField;
-    private JTextField rlhfDbPathField;
     private JTextField luceneIndexPathField;
 
     // Analysis Options section components
@@ -193,7 +192,6 @@ public class SettingsTab extends JPanel {
 
         // Database Paths
         analysisDbPathField = new JTextField(30);
-        rlhfDbPathField = new JTextField(30);
         luceneIndexPathField = new JTextField(30);
 
         // Analysis Options
@@ -395,20 +393,11 @@ public class SettingsTab extends JPanel {
         // Analysis DB
         JPanel analysisRow = new JPanel(new FlowLayout(FlowLayout.LEFT));
         analysisRow.add(new JLabel("Analysis DB:"));
-        analysisDbPathField.setText(Preferences.getProperty("GhidrAssist.AnalysisDBPath", "ghidrassist_analysis.db"));
+        analysisDbPathField.setText(ghidrassist.AnalysisDB.resolveDatabasePath());
         analysisRow.add(analysisDbPathField);
         JButton analysisDbBrowse = new JButton("Browse...");
         analysisDbBrowse.addActionListener(e -> browseFile(analysisDbPathField, "Select Analysis Database", false));
         analysisRow.add(analysisDbBrowse);
-
-        // RLHF DB
-        JPanel rlhfRow = new JPanel(new FlowLayout(FlowLayout.LEFT));
-        rlhfRow.add(new JLabel("RLHF DB:"));
-        rlhfDbPathField.setText(Preferences.getProperty("GhidrAssist.RLHFDatabasePath", "ghidrassist_rlhf.db"));
-        rlhfRow.add(rlhfDbPathField);
-        JButton rlhfDbBrowse = new JButton("Browse...");
-        rlhfDbBrowse.addActionListener(e -> browseFile(rlhfDbPathField, "Select RLHF Database", false));
-        rlhfRow.add(rlhfDbBrowse);
 
         // Lucene Index
         JPanel luceneRow = new JPanel(new FlowLayout(FlowLayout.LEFT));
@@ -420,7 +409,6 @@ public class SettingsTab extends JPanel {
         luceneRow.add(luceneBrowse);
 
         panel.add(analysisRow);
-        panel.add(rlhfRow);
         panel.add(luceneRow);
 
         return panel;
@@ -506,7 +494,6 @@ public class SettingsTab extends JPanel {
 
         // Database paths save on focus lost
         analysisDbPathField.addFocusListener(createPathFocusListener("GhidrAssist.AnalysisDBPath"));
-        rlhfDbPathField.addFocusListener(createPathFocusListener("GhidrAssist.RLHFDatabasePath"));
         luceneIndexPathField.addFocusListener(createPathFocusListener("GhidrAssist.LuceneIndexPath"));
 
         // System prompt buttons

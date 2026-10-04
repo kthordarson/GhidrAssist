@@ -141,8 +141,8 @@ public class TabController {
         this.actionAnalysisService = new ActionAnalysisService(plugin);
         this.ragManagementService = new RAGManagementService();
         this.analysisDataService = new AnalysisDataService(plugin);
-        this.feedbackService = new FeedbackService(plugin);
         this.analysisDB = new AnalysisDB();
+        this.feedbackService = new FeedbackService(plugin, analysisDB);
 
         // Initialize sub-controllers
         this.symGraphController = new SymGraphController(plugin, analysisDB, queryService, this::refreshChatHistory);
@@ -3099,7 +3099,6 @@ public class TabController {
     public void dispose() {
         codeAnalysisService.close();
         analysisDataService.close();
-        feedbackService.close();
 
         // Shutdown safety scheduler
         if (safetyScheduler != null) {
