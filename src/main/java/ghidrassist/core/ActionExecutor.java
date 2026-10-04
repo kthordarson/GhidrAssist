@@ -2,7 +2,9 @@ package ghidrassist.core;
 
 import java.util.Arrays;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
@@ -42,6 +44,56 @@ public class ActionExecutor {
     private static final Gson gson = new Gson();
 
     /**
+     * Shared state for executing a batch of actions against one program.
+     * Holds a single decompiler process (instead of spawning one per lookup) and
+     * remembers which functions already had their local names committed.
+     */
+    public static final class Session implements AutoCloseable {
+        private final Program program;
+        private final TaskMonitor monitor;
+        private final Set<Address> committedFunctions = new HashSet<>();
+        private DecompInterface decompiler;
+
+        public Session(Program program, TaskMonitor monitor) {
+            this.program = program;
+            this.monitor = monitor != null ? monitor : TaskMonitor.DUMMY;
+        }
+
+        DecompInterface getDecompiler() {
+            if (decompiler == null) {
+                decompiler = new DecompInterface();
+                setupDecompiler(decompiler, program);
+            }
+            return decompiler;
+        }
+
+        DecompileResults decompile(Function function) {
+            DecompInterface ifc = getDecompiler();
+            // Earlier actions in the batch may have changed the program
+            ifc.flushCache();
+            return ifc.decompileFunction(function, 30, monitor);
+        }
+
+        /** Commit local names once per function; returns true if a commit happened now. */
+        boolean ensureLocalsCommitted(Function function) {
+            if (committedFunctions.contains(function.getEntryPoint())) {
+                return false;
+            }
+            commitLocalNames(function, this);
+            committedFunctions.add(function.getEntryPoint());
+            return true;
+        }
+
+        @Override
+        public void close() {
+            if (decompiler != null) {
+                decompiler.dispose();
+                decompiler = null;
+            }
+        }
+    }
+
+    /**
      * Execute a specific action with the given arguments.
      * @param action The action to execute
      * @param argumentsJson JSON string containing action arguments
@@ -51,32 +103,8 @@ public class ActionExecutor {
      */
     public static void executeAction(String action, String argumentsJson, Program program, Address address) 
             throws Exception {
-        JsonObject arguments = gson.fromJson(argumentsJson, JsonObject.class);
-        
-        // Start transaction
-        int transaction = program.startTransaction("Execute " + action);
-        boolean success = false;
-        
-        try {
-            switch (action) {
-                case "rename_function":
-                    executeFunctionRename(arguments, program, address);
-                    break;
-                case "rename_variable":
-                    executeVariableRename(arguments, program, address);
-                    break;
-                case "retype_variable":
-                    executeVariableRetype(arguments, program, address);
-                    break;
-                case "auto_create_struct":
-                    executeAutoCreateStruct(arguments, program, address);
-                    break;
-                default:
-                    throw new InvalidInputException("Unknown action: " + action);
-            }
-            success = true;
-        } finally {
-            program.endTransaction(transaction, success);
+        try (Session session = new Session(program, TaskMonitor.DUMMY)) {
+            executeAction(action, argumentsJson, program, address, null, null, session);
         }
     }
 
@@ -85,6 +113,17 @@ public class ActionExecutor {
      */
     public static void executeAction(String action, String argumentsJson, Program program, Address address,
                                      AnalysisDB analysisDB, String binaryId) throws Exception {
+        try (Session session = new Session(program, TaskMonitor.DUMMY)) {
+            executeAction(action, argumentsJson, program, address, analysisDB, binaryId, session);
+        }
+    }
+
+    /**
+     * Execute an action within a shared {@link Session}, recording LLM renames when
+     * analysisDB and binaryId are provided.
+     */
+    public static void executeAction(String action, String argumentsJson, Program program, Address address,
+                                     AnalysisDB analysisDB, String binaryId, Session session) throws Exception {
         JsonObject arguments = gson.fromJson(argumentsJson, JsonObject.class);
 
         int transaction = program.startTransaction("Execute " + action);
@@ -100,17 +139,17 @@ public class ActionExecutor {
                     }
                     break;
                 case "rename_variable":
-                    executeVariableRename(arguments, program, address);
+                    executeVariableRename(arguments, program, address, session);
                     if (analysisDB != null && binaryId != null) {
                         String newName = arguments.get("new_name").getAsString().strip();
                         analysisDB.recordLlmRename(binaryId, address.getOffset(), "variable", newName);
                     }
                     break;
                 case "retype_variable":
-                    executeVariableRetype(arguments, program, address);
+                    executeVariableRetype(arguments, program, address, session);
                     break;
                 case "auto_create_struct":
-                    executeAutoCreateStruct(arguments, program, address);
+                    executeAutoCreateStruct(arguments, program, address, session);
                     break;
                 default:
                     throw new InvalidInputException("Unknown action: " + action);
@@ -129,24 +168,24 @@ public class ActionExecutor {
         function.setName(newName, SourceType.USER_DEFINED);
     }
 
-    private static void executeVariableRename(JsonObject arguments, Program program, Address address)
-            throws InvalidInputException, DuplicateNameException {
+    private static void executeVariableRename(JsonObject arguments, Program program, Address address,
+            Session session) throws InvalidInputException, DuplicateNameException {
         String varName = arguments.get("var_name").getAsString().strip();
         String newName = arguments.get("new_name").getAsString().strip();
 
         Function function = getFunctionAtAddress(program, address);
-        Variable variable = findVariable(function, varName);
+        Variable variable = findVariable(function, varName, session);
 
         variable.setName(newName, SourceType.USER_DEFINED);
     }
 
-    private static void executeVariableRetype(JsonObject arguments, Program program, Address address) 
-            throws Exception {
+    private static void executeVariableRetype(JsonObject arguments, Program program, Address address,
+            Session session) throws Exception {
         String varName = arguments.get("var_name").getAsString().strip();
         String newTypeStr = arguments.get("new_type").getAsString().strip();
         
         Function function = getFunctionAtAddress(program, address);
-        Variable variable = findVariable(function, varName);
+        Variable variable = findVariable(function, varName, session);
         
         DataType newType = parseDataType(newTypeStr, program.getDataTypeManager(), program);
         if (newType == null) {
@@ -156,32 +195,24 @@ public class ActionExecutor {
         variable.setDataType(newType, true, true, SourceType.USER_DEFINED);
     }
 
-    private static void executeAutoCreateStruct(JsonObject arguments, Program program, Address address) 
-            throws Exception {
+    private static void executeAutoCreateStruct(JsonObject arguments, Program program, Address address,
+            Session session) throws Exception {
         String varName = arguments.get("var_name").getAsString().strip();
         Function function = getFunctionAtAddress(program, address);
-        
-        DecompInterface decompiler = new DecompInterface();
-        try {
-            setupDecompiler(decompiler, program);
-            DecompileResults results = decompiler.decompileFunction(function, 30, TaskMonitor.DUMMY);
-            
-            if (!results.decompileCompleted()) {
-                throw new Exception("Decompilation failed for function: " + function.getName());
-            }
 
-            HighFunction highFunction = results.getHighFunction();
-            HighVariable highVar = findHighVariable(highFunction, varName);
-            
-            if (highVar == null) {
-                throw new InvalidInputException("Variable not found: " + varName);
-            }
-
-            createAndApplyStructure(program, function, highVar, decompiler);
-            
-        } finally {
-            decompiler.dispose();
+        DecompileResults results = session.decompile(function);
+        if (!results.decompileCompleted()) {
+            throw new Exception("Decompilation failed for function: " + function.getName());
         }
+
+        HighFunction highFunction = results.getHighFunction();
+        HighVariable highVar = findHighVariable(highFunction, varName);
+
+        if (highVar == null) {
+            throw new InvalidInputException("Variable not found: " + varName);
+        }
+
+        createAndApplyStructure(program, function, highVar, session);
     }
 
     private static Function getFunctionAtAddress(Program program, Address address) 
@@ -193,23 +224,36 @@ public class ActionExecutor {
         return function;
     }
 
-    private static Variable findVariable(Function function, String varName) 
+    private static Variable findVariable(Function function, String varName, Session session)
             throws InvalidInputException {
         // Commit local names to ensure all variables are available
-        commitLocalNames(function.getProgram(), function);
-        
+        boolean freshlyCommitted = session.ensureLocalsCommitted(function);
+        Variable variable = lookupVariable(function, varName);
+
+        // An earlier action in the batch may have changed the decompiled locals; re-commit once
+        if (variable == null && !freshlyCommitted) {
+            commitLocalNames(function, session);
+            variable = lookupVariable(function, varName);
+        }
+
+        if (variable == null) {
+            throw new InvalidInputException("Variable not found: " + varName);
+        }
+        return variable;
+    }
+
+    private static Variable lookupVariable(Function function, String varName) {
         // Search in all variables and parameters
         List<Variable> allVars = new ArrayList<>();
         allVars.addAll(Arrays.asList(function.getAllVariables()));
         allVars.addAll(Arrays.asList(function.getParameters()));
-        
+
         for (Variable var : allVars) {
             if (var.getName().equals(varName)) {
                 return var;
             }
         }
-        
-        throw new InvalidInputException("Variable not found: " + varName);
+        return null;
     }
 
     private static DataType parseDataType(String typeStr, DataTypeManager dtm, Program program) 
@@ -245,10 +289,10 @@ public class ActionExecutor {
     }
 
     private static void createAndApplyStructure(Program program, Function function, 
-            HighVariable highVar, DecompInterface decompiler) throws Exception {
+            HighVariable highVar, Session session) throws Exception {
         
-        FillOutStructureHelper fillHelper = new FillOutStructureHelper(program, TaskMonitor.DUMMY);
-        Structure structDT = fillHelper.processStructure(highVar, function, false, true, decompiler);
+        FillOutStructureHelper fillHelper = new FillOutStructureHelper(program, session.monitor);
+        Structure structDT = fillHelper.processStructure(highVar, function, false, true, session.getDecompiler());
         
         if (structDT == null) {
             throw new Exception("Failed to create structure");
@@ -260,7 +304,7 @@ public class ActionExecutor {
         PointerDataType ptrStruct = new PointerDataType(structDT);
 
         // First get variable from function
-        Variable var = findVariable(function, highVar.getSymbol().getName());
+        Variable var = findVariable(function, highVar.getSymbol().getName(), session);
         
         if (var instanceof ghidra.program.model.listing.AutoParameterImpl) {
             // Modify the function signature to change the data type of the auto-parameter
@@ -305,10 +349,13 @@ public class ActionExecutor {
      * Commits local variable names to the database for a function
      */
     public static void commitLocalNames(Program program, Function function) {
-        DecompInterface ifc = new DecompInterface();
-        ifc.openProgram(program);
-        
-        DecompileResults res = ifc.decompileFunction(function, 30, null);
+        try (Session session = new Session(program, TaskMonitor.DUMMY)) {
+            commitLocalNames(function, session);
+        }
+    }
+
+    private static void commitLocalNames(Function function, Session session) {
+        DecompileResults res = session.decompile(function);
         if (res.decompileCompleted()) {
             try {
                 function.setName(function.getName(), SourceType.USER_DEFINED); // Commit the function parameters
@@ -319,7 +366,5 @@ public class ActionExecutor {
                 Msg.error(ActionExecutor.class, "Error committing local names: " + e.getMessage());
             }
         }
-        
-        ifc.closeProgram();
     }
 }

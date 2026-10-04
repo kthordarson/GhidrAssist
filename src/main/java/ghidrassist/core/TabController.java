@@ -1228,7 +1228,7 @@ public class TabController {
 
     public void handleApplyActions(JTable actionsTable) {
         DefaultTableModel model = (DefaultTableModel) actionsTable.getModel();
-        actionAnalysisService.applyActions(model, plugin.getCurrentProgram(), plugin.getCurrentAddress());
+        actionAnalysisService.applyActions(model, plugin.getCurrentProgram(), plugin.getCurrentAddress(), analysisDB);
     }
 
     // ==== RAG Management Operations ====

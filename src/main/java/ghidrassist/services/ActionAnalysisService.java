@@ -3,7 +3,12 @@ package ghidrassist.services;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.Program;
+import ghidra.util.Msg;
+import ghidra.util.Swing;
+import ghidra.util.task.Task;
+import ghidra.util.task.TaskLauncher;
 import ghidra.util.task.TaskMonitor;
+import ghidrassist.AnalysisDB;
 import ghidrassist.GhidrAssistPlugin;
 import ghidrassist.LlmApi;
 import ghidrassist.apiprovider.APIProviderConfig;
@@ -16,6 +21,7 @@ import javax.swing.table.DefaultTableModel;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -26,6 +32,7 @@ public class ActionAnalysisService {
     
     private final GhidrAssistPlugin plugin;
     private final AtomicInteger activeRequests;
+    private final AtomicBoolean applyingActions = new AtomicBoolean(false);
     
     public ActionAnalysisService(GhidrAssistPlugin plugin) {
         this.plugin = plugin;
@@ -101,36 +108,84 @@ public class ActionAnalysisService {
     }
     
     /**
-     * Apply selected actions from the analysis results
+     * Apply selected actions from the analysis results.
+     * Runs in a background task so the Swing thread stays responsive; table
+     * updates are posted back to the Swing thread as each action finishes.
      */
-    public void applyActions(DefaultTableModel model, Program program, Address address) {
+    public void applyActions(DefaultTableModel model, Program program, Address address, AnalysisDB analysisDB) {
+        if (program == null || address == null) {
+            Msg.showWarn(this, null, "Apply Actions", "No program or address selected.");
+            return;
+        }
+
+        // Snapshot the selected rows on the Swing thread
+        List<PendingAction> pending = new ArrayList<>();
         for (int row = 0; row < model.getRowCount(); row++) {
-            Boolean isSelected = (Boolean) model.getValueAt(row, 0);
-            if (isSelected) {
-                applyAction(model, row, program, address);
+            if (Boolean.TRUE.equals(model.getValueAt(row, 0))) {
+                String action = model.getValueAt(row, 1).toString().replace(" ", "_");
+                String argumentsJson = model.getValueAt(row, 4).toString();
+                pending.add(new PendingAction(row, action, argumentsJson));
+            }
+        }
+        if (pending.isEmpty() || !applyingActions.compareAndSet(false, true)) {
+            return;
+        }
+
+        TaskLauncher.launch(new Task("Applying Actions", true, true, true) {
+            @Override
+            public void run(TaskMonitor monitor) {
+                try {
+                    applyPendingActions(pending, model, program, address, analysisDB, monitor);
+                } finally {
+                    applyingActions.set(false);
+                }
+            }
+        });
+    }
+
+    private void applyPendingActions(List<PendingAction> pending, DefaultTableModel model, Program program,
+            Address address, AnalysisDB analysisDB, TaskMonitor monitor) {
+        monitor.initialize(pending.size());
+        String binaryId = program.getExecutableSHA256();
+
+        try (ActionExecutor.Session session = new ActionExecutor.Session(program, monitor)) {
+            for (PendingAction p : pending) {
+                if (monitor.isCancelled()) {
+                    break;
+                }
+                monitor.setMessage("Applying " + p.action.replace("_", " "));
+
+                String status;
+                boolean applied;
+                try {
+                    // Pass the analysisDB so LLM renames are recorded for provenance tracking
+                    ActionExecutor.executeAction(p.action, p.argumentsJson, program, address,
+                            analysisDB, binaryId, session);
+                    status = "Applied";
+                    applied = true;
+                } catch (Exception e) {
+                    status = "Failed: " + e.getMessage();
+                    applied = false;
+                }
+
+                String finalStatus = status;
+                boolean finalApplied = applied;
+                Swing.runLater(() -> {
+                    if (p.row >= model.getRowCount()) {
+                        return;
+                    }
+                    model.setValueAt(finalStatus, p.row, 3);
+                    if (finalApplied) {
+                        model.setValueAt(Boolean.FALSE, p.row, 0);
+                    }
+                });
+                monitor.incrementProgress(1);
             }
         }
     }
-    
-    /**
-     * Apply a single action
-     */
-    private void applyAction(DefaultTableModel model, int row, Program program, Address address) {
-        String action = model.getValueAt(row, 1).toString().replace(" ", "_");
-        String argumentsJson = model.getValueAt(row, 4).toString();
 
-        try {
-            // Use the overload that records LLM renames for provenance tracking
-            ghidrassist.AnalysisDB analysisDB = new ghidrassist.AnalysisDB();
-            String binaryId = program.getExecutableSHA256();
-            ActionExecutor.executeAction(action, argumentsJson, program, address, analysisDB, binaryId);
-            model.setValueAt("Applied", row, 3);
-            model.setValueAt(Boolean.FALSE, row, 0);
-        } catch (Exception e) {
-            model.setValueAt("Failed: " + e.getMessage(), row, 3);
-        }
-    }
-    
+    private record PendingAction(int row, String action, String argumentsJson) {}
+
     /**
      * Get the function template for a specific action
      */
