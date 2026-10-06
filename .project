@@ -24,7 +24,7 @@
 		<link>
 			<name>Ghidra</name>
 			<type>2</type>
-			<location>/home/kth/ghidrastuff/GhidrAssist.1/c::/home/jtang613/tools/ghidra_12.0_PUBLIC</location>
+			<location>c:/home/kth/ghidrastuff/GhidrAssist.1/c::/home/jtang613/tools/ghidra_12.0_PUBLIC</location>
 		</link>
 	</linkedResources>
 	<filteredResources>
