@@ -63,20 +63,18 @@ public class ManualAnalysisPanel extends JPanel {
 
         // ReIndex Binary
         contentPanel.add(createAnalysisRow(
-            reindexButton,
-            "Full Pipeline",
-            "Extract structure from Ghidra analysis, then automatically run Security " +
-            "and Network Flow analysis. Creates function nodes and call edges."
-        ));
+                reindexButton,
+                "Full Pipeline",
+                "Extract structure from Ghidra analysis, then automatically run Security " +
+                        "and Network Flow analysis. Creates function nodes and call edges."));
         contentPanel.add(Box.createVerticalStrut(8));
 
         // Semantic Analysis
         contentPanel.add(createAnalysisRow(
-            semanticAnalysisButton,
-            "LLM Summarization",
-            "Use the configured LLM to generate summaries for all functions that " +
-            "don't have summaries yet. Requires API credits."
-        ));
+                semanticAnalysisButton,
+                "LLM Summarization",
+                "Use the configured LLM to generate summaries for all functions that " +
+                        "don't have summaries yet. Requires API credits."));
         contentPanel.add(Box.createVerticalStrut(20));
 
         // ===== Secondary Operations Section =====
@@ -93,38 +91,34 @@ public class ManualAnalysisPanel extends JPanel {
 
         // Security Analysis
         contentPanel.add(createAnalysisRow(
-            securityAnalysisButton,
-            "Taint Analysis",
-            "Find paths from input sources (user input, network) to dangerous sinks " +
-            "(strcpy, system, SQL). Creates TAINT_FLOWS_TO and VULNERABLE_VIA edges."
-        ));
+                securityAnalysisButton,
+                "Taint Analysis",
+                "Find paths from input sources (user input, network) to dangerous sinks " +
+                        "(strcpy, system, SQL). Creates TAINT_FLOWS_TO and VULNERABLE_VIA edges."));
         contentPanel.add(Box.createVerticalStrut(8));
 
         // Network Flow Analysis
         contentPanel.add(createAnalysisRow(
-            networkFlowButton,
-            "Network API Tracing",
-            "Trace data flow through network send/recv APIs (WSASend, recv, send). " +
-            "Creates NETWORK_SEND and NETWORK_RECV edges from entry points."
-        ));
+                networkFlowButton,
+                "Network API Tracing",
+                "Trace data flow through network send/recv APIs (WSASend, recv, send). " +
+                        "Creates NETWORK_SEND and NETWORK_RECV edges from entry points."));
         contentPanel.add(Box.createVerticalStrut(8));
 
         // Community Detection
         contentPanel.add(createAnalysisRow(
-            communityDetectionButton,
-            "Function Clustering",
-            "Group related functions into communities using Label Propagation algorithm. " +
-            "Helps identify modules and subsystems in the binary."
-        ));
+                communityDetectionButton,
+                "Function Clustering",
+                "Group related functions into communities using Label Propagation algorithm. " +
+                        "Helps identify modules and subsystems in the binary."));
         contentPanel.add(Box.createVerticalStrut(8));
 
         // Refresh Names
         contentPanel.add(createAnalysisRow(
-            refreshNamesButton,
-            "Sync Names",
-            "Update function names in the graph to match current Ghidra names. " +
-            "Use after renaming functions in Ghidra."
-        ));
+                refreshNamesButton,
+                "Sync Names",
+                "Update function names in the graph to match current Ghidra names. " +
+                        "Use after renaming functions in Ghidra."));
 
         // Add glue to push content to top
         contentPanel.add(Box.createVerticalGlue());

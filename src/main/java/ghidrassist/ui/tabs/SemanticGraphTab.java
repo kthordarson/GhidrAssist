@@ -13,7 +13,8 @@ import ghidrassist.ui.tabs.semanticgraph.ManualAnalysisPanel;
 /**
  * Semantic Graph tab for viewing and editing knowledge graph data.
  * Provides three sub-views:
- * - List View: Table/list-based display of callers, callees, edges, and security flags
+ * - List View: Table/list-based display of callers, callees, edges, and
+ * security flags
  * - Visual Graph: Interactive node-edge diagram with configurable N-hop depth
  * - Search: Query interface for testing semantic search and graph queries
  */
@@ -107,7 +108,8 @@ public class SemanticGraphTab extends JPanel {
 
         add(headerPanel, BorderLayout.NORTH);
 
-        // ===== Sub-tabbed pane (List View / Visual Graph / Search / Manual Analysis) =====
+        // ===== Sub-tabbed pane (List View / Visual Graph / Search / Manual Analysis)
+        // =====
         subTabbedPane.addTab("List View", listViewPanel);
         subTabbedPane.addTab("Visual Graph", graphViewPanel);
         subTabbedPane.addTab("Search", searchViewPanel);
@@ -172,16 +174,15 @@ public class SemanticGraphTab extends JPanel {
      * Update the displayed function/address when Ghidra cursor changes.
      * Called from TabController when location changes.
      *
-     * @param address The new address
+     * @param address      The new address
      * @param functionName The function name at that address (may be null)
      */
     public void updateLocation(long address, String functionName) {
         this.currentAddress = address;
 
         // Update the header field
-        String displayText = functionName != null ?
-                String.format("%s @ 0x%x", functionName, address) :
-                String.format("0x%x", address);
+        String displayText = functionName != null ? String.format("%s @ 0x%x", functionName, address)
+                : String.format("0x%x", address);
         currentFunctionField.setText(displayText);
 
         // Refresh the current view
@@ -191,10 +192,10 @@ public class SemanticGraphTab extends JPanel {
     /**
      * Update the status line with node information.
      *
-     * @param indexed Whether the node is indexed
+     * @param indexed     Whether the node is indexed
      * @param callerCount Number of callers
      * @param calleeCount Number of callees
-     * @param flagCount Number of security flags
+     * @param flagCount   Number of security flags
      */
     public void updateStatus(boolean indexed, int callerCount, int calleeCount, int flagCount) {
         if (indexed) {
@@ -208,9 +209,9 @@ public class SemanticGraphTab extends JPanel {
     /**
      * Update the graph statistics display.
      *
-     * @param nodeCount Total nodes in graph
-     * @param edgeCount Total edges in graph
-     * @param staleCount Number of stale nodes
+     * @param nodeCount   Total nodes in graph
+     * @param edgeCount   Total edges in graph
+     * @param staleCount  Number of stale nodes
      * @param lastIndexed Last indexing timestamp (may be null)
      */
     public void updateStats(int nodeCount, int edgeCount, int staleCount, String lastIndexed) {
@@ -277,7 +278,7 @@ public class SemanticGraphTab extends JPanel {
     private void handleResetGraph() {
         int result = JOptionPane.showConfirmDialog(this,
                 "Are you sure you want to reset the knowledge graph?\n" +
-                "This will delete all indexed data for this binary.",
+                        "This will delete all indexed data for this binary.",
                 "Reset Graph",
                 JOptionPane.YES_NO_OPTION,
                 JOptionPane.WARNING_MESSAGE);
@@ -297,7 +298,7 @@ public class SemanticGraphTab extends JPanel {
         // Otherwise confirm before starting
         int result = JOptionPane.showConfirmDialog(this,
                 "ReIndex the entire binary?\n" +
-                "This may take a while for large binaries.",
+                        "This may take a while for large binaries.",
                 "ReIndex Binary",
                 JOptionPane.YES_NO_OPTION,
                 JOptionPane.QUESTION_MESSAGE);
@@ -335,11 +336,11 @@ public class SemanticGraphTab extends JPanel {
         // Otherwise confirm before starting
         int result = JOptionPane.showConfirmDialog(this,
                 "ReIndex the entire binary?\n" +
-                "This will:\n" +
-                "• Extract structure from Ghidra analysis\n" +
-                "• Run Security Analysis (taint paths)\n" +
-                "• Run Network Flow Analysis (send/recv tracing)\n\n" +
-                "This may take a while for large binaries.",
+                        "This will:\n" +
+                        "• Extract structure from Ghidra analysis\n" +
+                        "• Run Security Analysis (taint paths)\n" +
+                        "• Run Network Flow Analysis (send/recv tracing)\n\n" +
+                        "This may take a while for large binaries.",
                 "ReIndex Binary",
                 JOptionPane.YES_NO_OPTION,
                 JOptionPane.QUESTION_MESSAGE);
@@ -407,7 +408,7 @@ public class SemanticGraphTab extends JPanel {
 
         JTextArea hint = new JTextArea(
                 "Names are comma-separated substrings. Ranges are hex start-end pairs, comma-separated.\n" +
-                "Max nodes 0 means all matching stale/unsummarized nodes.");
+                        "Max nodes 0 means all matching stale/unsummarized nodes.");
         hint.setEditable(false);
         hint.setOpaque(false);
         hint.setLineWrap(true);
@@ -427,10 +428,10 @@ public class SemanticGraphTab extends JPanel {
         try {
             List<String> includeNames = SemanticAnalysisOptions.parsePatternList(includeNamesField.getText());
             List<String> excludeNames = SemanticAnalysisOptions.parsePatternList(excludeNamesField.getText());
-            List<SemanticAnalysisOptions.AddressRange> includeRanges =
-                    SemanticAnalysisOptions.parseRangeList(includeRangesField.getText());
-            List<SemanticAnalysisOptions.AddressRange> excludeRanges =
-                    SemanticAnalysisOptions.parseRangeList(excludeRangesField.getText());
+            List<SemanticAnalysisOptions.AddressRange> includeRanges = SemanticAnalysisOptions
+                    .parseRangeList(includeRangesField.getText());
+            List<SemanticAnalysisOptions.AddressRange> excludeRanges = SemanticAnalysisOptions
+                    .parseRangeList(excludeRangesField.getText());
             int maxNodes = (Integer) maxNodesSpinner.getValue();
             return new SemanticAnalysisOptions(includeNames, excludeNames, includeRanges, excludeRanges,
                     maxNodes, includeExternalCheckBox.isSelected());
@@ -454,11 +455,11 @@ public class SemanticGraphTab extends JPanel {
         // Otherwise confirm before starting
         int result = JOptionPane.showConfirmDialog(this,
                 "Run Security Analysis?\n" +
-                "This will:\n" +
-                "• Find taint paths from sources (input) to sinks (dangerous functions)\n" +
-                "• Create TAINT_FLOWS_TO edges along discovered paths\n" +
-                "• Create VULNERABLE_VIA edges from entry points to vulnerable sinks\n\n" +
-                "This requires an indexed binary.",
+                        "This will:\n" +
+                        "• Find taint paths from sources (input) to sinks (dangerous functions)\n" +
+                        "• Create TAINT_FLOWS_TO edges along discovered paths\n" +
+                        "• Create VULNERABLE_VIA edges from entry points to vulnerable sinks\n\n" +
+                        "This requires an indexed binary.",
                 "Security Analysis",
                 JOptionPane.YES_NO_OPTION,
                 JOptionPane.QUESTION_MESSAGE);
@@ -481,11 +482,11 @@ public class SemanticGraphTab extends JPanel {
         // Otherwise confirm before starting
         int result = JOptionPane.showConfirmDialog(this,
                 "Run Network Flow Analysis?\n" +
-                "This will:\n" +
-                "• Find functions that call send/recv APIs (WSASend, recv, etc.)\n" +
-                "• Create NETWORK_SEND edges from entry points to send functions\n" +
-                "• Create NETWORK_RECV edges from recv functions to their callers\n\n" +
-                "This requires an indexed binary.",
+                        "This will:\n" +
+                        "• Find functions that call send/recv APIs (WSASend, recv, etc.)\n" +
+                        "• Create NETWORK_SEND edges from entry points to send functions\n" +
+                        "• Create NETWORK_RECV edges from recv functions to their callers\n\n" +
+                        "This requires an indexed binary.",
                 "Network Flow Analysis",
                 JOptionPane.YES_NO_OPTION,
                 JOptionPane.QUESTION_MESSAGE);
@@ -508,11 +509,11 @@ public class SemanticGraphTab extends JPanel {
         // Otherwise confirm before starting
         int result = JOptionPane.showConfirmDialog(this,
                 "Run Community Detection?\n" +
-                "This will:\n" +
-                "• Group related functions into communities using Label Propagation\n" +
-                "• Create BELONGS_TO_COMMUNITY edges\n" +
-                "• Generate summaries for each detected community\n\n" +
-                "This requires an indexed binary.",
+                        "This will:\n" +
+                        "• Group related functions into communities using Label Propagation\n" +
+                        "• Create BELONGS_TO_COMMUNITY edges\n" +
+                        "• Generate summaries for each detected community\n\n" +
+                        "This requires an indexed binary.",
                 "Community Detection",
                 JOptionPane.YES_NO_OPTION,
                 JOptionPane.QUESTION_MESSAGE);

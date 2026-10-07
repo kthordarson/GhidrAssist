@@ -30,7 +30,8 @@ import java.util.Set;
 
 /**
  * Controller for Semantic Graph operations.
- * Handles indexing, analysis, navigation, and visualization of the knowledge graph.
+ * Handles indexing, analysis, navigation, and visualization of the knowledge
+ * graph.
  *
  * Extracted from TabController as part of decomposition refactoring.
  */
@@ -82,7 +83,7 @@ public class SemanticGraphController {
                 ghidra.program.model.listing.FunctionManager fm = plugin.getCurrentProgram().getFunctionManager();
                 for (Function func : fm.getFunctions(true)) {
                     if (func.getName().equalsIgnoreCase(text) ||
-                        text.contains(func.getName())) {
+                            text.contains(func.getName())) {
                         address = func.getEntryPoint().getOffset();
                         break;
                     }
@@ -137,8 +138,8 @@ public class SemanticGraphController {
             @Override
             public void run(TaskMonitor monitor) throws ghidra.util.exception.CancelledException {
                 try {
-                    ghidrassist.graphrag.GraphRAGService service =
-                            ghidrassist.graphrag.GraphRAGService.getInstance(analysisDB);
+                    ghidrassist.graphrag.GraphRAGService service = ghidrassist.graphrag.GraphRAGService
+                            .getInstance(analysisDB);
                     service.clearGraph(plugin.getCurrentProgram());
 
                     SwingUtilities.invokeLater(() -> {
@@ -191,13 +192,14 @@ public class SemanticGraphController {
                     result.functionsExtracted,
                     result.callEdgesCreated,
                     0,
-                    formatIndexedTimestamp(lastIndexed)
-            );
+                    formatIndexedTimestamp(lastIndexed));
 
-            Msg.info(this, String.format("Structure indexing complete: %d functions, %d edges. Starting Security Analysis...",
-                    result.functionsExtracted, result.callEdgesCreated));
+            Msg.info(this,
+                    String.format("Structure indexing complete: %d functions, %d edges. Starting Security Analysis...",
+                            result.functionsExtracted, result.callEdgesCreated));
 
-            // Chain to Security Analysis (which will chain to Network Flow, then Community Detection)
+            // Chain to Security Analysis (which will chain to Network Flow, then Community
+            // Detection)
             startSecurityAnalysisChain();
         });
 
@@ -493,7 +495,8 @@ public class SemanticGraphController {
         securityAnalysisWorker.setCompletedCallback(result -> {
             semanticGraphTab.hideProgress();
             semanticGraphTab.setSecurityAnalysisRunning(false);
-            Msg.info(this, String.format("Security Analysis complete: %d taint paths, %d VULNERABLE_VIA edges. Starting Network Flow Analysis...",
+            Msg.info(this, String.format(
+                    "Security Analysis complete: %d taint paths, %d VULNERABLE_VIA edges. Starting Network Flow Analysis...",
                     result.pathCount, result.vulnerableViaEdges));
             startNetworkFlowAnalysisChain();
         });
@@ -533,7 +536,8 @@ public class SemanticGraphController {
         networkFlowWorker.setCompletedCallback(result -> {
             semanticGraphTab.hideProgress();
             semanticGraphTab.setNetworkFlowRunning(false);
-            Msg.info(this, String.format("Network Flow Analysis complete: %d send edges, %d recv edges. Starting Community Detection...",
+            Msg.info(this, String.format(
+                    "Network Flow Analysis complete: %d send edges, %d recv edges. Starting Community Detection...",
                     result.sendPathEdges, result.recvPathEdges));
             startCommunityDetectionChain();
         });
@@ -574,7 +578,11 @@ public class SemanticGraphController {
             semanticGraphTab.hideProgress();
             semanticGraphTab.setCommunityDetectionRunning(false);
             semanticGraphTab.refreshCurrentView();
-            Msg.showInfo(this, null, "Full Pipeline Complete", String.format("ReIndex pipeline completed:\n" + "• Structure extraction\n" + "• Security analysis\n" + "• Network flow analysis\n" + "• Community detection (%d communities)", result.communityCount));
+            Msg.showInfo(this, null, "Full Pipeline Complete",
+                    String.format(
+                            "ReIndex pipeline completed:\n" + "• Structure extraction\n" + "• Security analysis\n"
+                                    + "• Network flow analysis\n" + "• Community detection (%d communities)",
+                            result.communityCount));
         });
 
         communityDetectionWorker.setFailedCallback(error -> {
@@ -582,7 +590,8 @@ public class SemanticGraphController {
             semanticGraphTab.setCommunityDetectionRunning(false);
             semanticGraphTab.refreshCurrentView();
             Msg.warn(this, "Community Detection failed: " + error);
-            Msg.showInfo(this, null, "Pipeline Complete (with errors)", "ReIndex pipeline completed with some errors.\nCheck console for details.");
+            Msg.showInfo(this, null, "Pipeline Complete (with errors)",
+                    "ReIndex pipeline completed with some errors.\nCheck console for details.");
         });
 
         communityDetectionWorker.setCancelledCallback(() -> {
@@ -619,16 +628,15 @@ public class SemanticGraphController {
                         return;
                     }
 
-                    ghidrassist.graphrag.GraphRAGService service =
-                            ghidrassist.graphrag.GraphRAGService.getInstance(analysisDB);
+                    ghidrassist.graphrag.GraphRAGService service = ghidrassist.graphrag.GraphRAGService
+                            .getInstance(analysisDB);
                     service.setCurrentProgram(plugin.getCurrentProgram());
 
                     // Index just this function
-                    BinaryKnowledgeGraph graph =
-                            analysisDB.getKnowledgeGraph(plugin.getCurrentProgram().getExecutableSHA256());
-                    ghidrassist.graphrag.extraction.StructureExtractor extractor =
-                            new ghidrassist.graphrag.extraction.StructureExtractor(
-                                    plugin.getCurrentProgram(), graph, monitor);
+                    BinaryKnowledgeGraph graph = analysisDB
+                            .getKnowledgeGraph(plugin.getCurrentProgram().getExecutableSHA256());
+                    ghidrassist.graphrag.extraction.StructureExtractor extractor = new ghidrassist.graphrag.extraction.StructureExtractor(
+                            plugin.getCurrentProgram(), graph, monitor);
                     try {
                         extractor.extractFunction(function);
                     } finally {
@@ -714,8 +722,7 @@ public class SemanticGraphController {
             BinaryKnowledgeGraph graph,
             String centerNodeId,
             List<BinaryKnowledgeGraph.GraphEdge> outgoing,
-            List<BinaryKnowledgeGraph.GraphEdge> incoming
-    ) {
+            List<BinaryKnowledgeGraph.GraphEdge> incoming) {
         List<ListViewPanel.EdgeEntry> entries = new ArrayList<>();
         for (BinaryKnowledgeGraph.GraphEdge edge : outgoing) {
             entries.add(buildEdgeEntry(graph, centerNodeId, edge));
@@ -729,8 +736,7 @@ public class SemanticGraphController {
     private ListViewPanel.EdgeEntry buildEdgeEntry(
             BinaryKnowledgeGraph graph,
             String centerNodeId,
-            BinaryKnowledgeGraph.GraphEdge edge
-    ) {
+            BinaryKnowledgeGraph.GraphEdge edge) {
         String targetId = edge.getSourceId().equals(centerNodeId) ? edge.getTargetId() : edge.getSourceId();
         KnowledgeNode targetNode = graph.getNode(targetId);
         return new ListViewPanel.EdgeEntry(
@@ -738,8 +744,7 @@ public class SemanticGraphController {
                 edge.getType().getDisplayName(),
                 targetId,
                 formatNodeDisplayName(targetNode, targetId),
-                edge.getWeight()
-        );
+                edge.getWeight());
     }
 
     private String formatNodeDisplayName(KnowledgeNode node, String nodeId) {
@@ -768,8 +773,8 @@ public class SemanticGraphController {
 
         SwingUtilities.invokeLater(() -> {
             try {
-                BinaryKnowledgeGraph graph =
-                        analysisDB.getKnowledgeGraph(plugin.getCurrentProgram().getExecutableSHA256());
+                BinaryKnowledgeGraph graph = analysisDB
+                        .getKnowledgeGraph(plugin.getCurrentProgram().getExecutableSHA256());
 
                 KnowledgeNode centerNode = graph.getNodeByAddress(address);
 
@@ -800,7 +805,7 @@ public class SemanticGraphController {
 
                 for (BinaryKnowledgeGraph.GraphEdge edge : graph.getIncomingEdges(centerNode.getId())) {
                     if (edge.getType() == EdgeType.CALLS &&
-                        !existingNodeIds.contains(edge.getSourceId())) {
+                            !existingNodeIds.contains(edge.getSourceId())) {
                         KnowledgeNode callerNode = graph.getNode(edge.getSourceId());
                         if (callerNode != null) {
                             allNodes.add(callerNode);
@@ -856,8 +861,7 @@ public class SemanticGraphController {
         }
 
         try {
-            BinaryKnowledgeGraph graph =
-                    analysisDB.getKnowledgeGraph(plugin.getCurrentProgram().getExecutableSHA256());
+            BinaryKnowledgeGraph graph = analysisDB.getKnowledgeGraph(plugin.getCurrentProgram().getExecutableSHA256());
             KnowledgeNode node = graph.getNodeByAddress(address);
 
             if (node != null) {
@@ -878,8 +882,7 @@ public class SemanticGraphController {
         }
 
         try {
-            BinaryKnowledgeGraph graph =
-                    analysisDB.getKnowledgeGraph(plugin.getCurrentProgram().getExecutableSHA256());
+            BinaryKnowledgeGraph graph = analysisDB.getKnowledgeGraph(plugin.getCurrentProgram().getExecutableSHA256());
             KnowledgeNode node = graph.getNodeByAddress(address);
 
             if (node != null) {
@@ -902,8 +905,7 @@ public class SemanticGraphController {
         }
 
         try {
-            BinaryKnowledgeGraph graph =
-                    analysisDB.getKnowledgeGraph(plugin.getCurrentProgram().getExecutableSHA256());
+            BinaryKnowledgeGraph graph = analysisDB.getKnowledgeGraph(plugin.getCurrentProgram().getExecutableSHA256());
             KnowledgeNode node = graph.getNodeByAddress(address);
 
             if (node != null) {
@@ -925,8 +927,7 @@ public class SemanticGraphController {
         }
 
         try {
-            BinaryKnowledgeGraph graph =
-                    analysisDB.getKnowledgeGraph(plugin.getCurrentProgram().getExecutableSHA256());
+            BinaryKnowledgeGraph graph = analysisDB.getKnowledgeGraph(plugin.getCurrentProgram().getExecutableSHA256());
             KnowledgeNode node = graph.getNode(targetId);
 
             if (node != null) {
@@ -943,12 +944,12 @@ public class SemanticGraphController {
      * Handle semantic graph search query.
      * Executes a semantic query tool and returns the result via callback.
      *
-     * @param queryType The tool name (e.g., "ga_search_semantic")
-     * @param args The query arguments as JsonObject
+     * @param queryType      The tool name (e.g., "ga_search_semantic")
+     * @param args           The query arguments as JsonObject
      * @param resultCallback Callback to receive the JSON result string
      */
     public void handleSearchQuery(String queryType, com.google.gson.JsonObject args,
-                                  java.util.function.Consumer<String> resultCallback) {
+            java.util.function.Consumer<String> resultCallback) {
         if (plugin.getCurrentProgram() == null) {
             resultCallback.accept("{\"error\": \"No program loaded\"}");
             return;
@@ -961,8 +962,8 @@ public class SemanticGraphController {
                     monitor.setMessage("Executing " + queryType + "...");
 
                     // Create query tools instance
-                    ghidrassist.graphrag.query.SemanticQueryTools tools =
-                            new ghidrassist.graphrag.query.SemanticQueryTools(analysisDB);
+                    ghidrassist.graphrag.query.SemanticQueryTools tools = new ghidrassist.graphrag.query.SemanticQueryTools(
+                            analysisDB);
                     tools.setCurrentProgram(plugin.getCurrentProgram());
 
                     // Execute the query
@@ -994,8 +995,8 @@ public class SemanticGraphController {
         if (epochMs == null || epochMs <= 0) {
             return "unknown";
         }
-        DateTimeFormatter formatter =
-                DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneId.systemDefault());
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+                .withZone(ZoneId.systemDefault());
         return formatter.format(Instant.ofEpochMilli(epochMs));
     }
 
