@@ -102,9 +102,86 @@ public class SymGraphService {
             } catch (Exception e) {
                 Msg.warn(this, TAG + ": Failed to configure insecure SSL: " + e.getMessage());
             }
+        } else {
+            // Trust both the JDK cacerts and the OS trust store (e.g. Windows-ROOT), so that
+            // corporate TLS-inspection root CAs installed in Windows are honoured.
+            try {
+                javax.net.ssl.X509TrustManager tm = buildSystemAwareTrustManager();
+                javax.net.ssl.SSLContext sslContext = javax.net.ssl.SSLContext.getInstance("TLS");
+                sslContext.init(null, new javax.net.ssl.TrustManager[]{tm}, null);
+                builder.sslSocketFactory(sslContext.getSocketFactory(), tm);
+            } catch (Exception e) {
+                Msg.warn(this, TAG + ": Failed to add OS trust store, using JDK defaults: " + e.getMessage());
+            }
         }
 
         return builder.build();
+    }
+
+    /**
+     * Builds a trust manager that accepts a server chain if either the JDK default trust
+     * store or the OS trust store (Windows-ROOT on Windows) trusts it.
+     */
+    private static javax.net.ssl.X509TrustManager buildSystemAwareTrustManager() throws Exception {
+        List<javax.net.ssl.X509TrustManager> managers = new ArrayList<>();
+        managers.add(trustManagerFor(null)); // JDK default cacerts
+
+        if (System.getProperty("os.name", "").toLowerCase().startsWith("windows")) {
+            try {
+                java.security.KeyStore winRoot = java.security.KeyStore.getInstance("Windows-ROOT");
+                winRoot.load(null, null);
+                managers.add(trustManagerFor(winRoot));
+            } catch (Exception e) {
+                Msg.debug(SymGraphService.class, TAG + ": Windows-ROOT store unavailable: " + e.getMessage());
+            }
+        }
+
+        if (managers.size() == 1) {
+            return managers.get(0);
+        }
+
+        return new javax.net.ssl.X509TrustManager() {
+            @Override
+            public void checkClientTrusted(java.security.cert.X509Certificate[] chain, String authType)
+                    throws java.security.cert.CertificateException {
+                java.security.cert.CertificateException last = null;
+                for (javax.net.ssl.X509TrustManager m : managers) {
+                    try { m.checkClientTrusted(chain, authType); return; }
+                    catch (java.security.cert.CertificateException e) { last = e; }
+                }
+                throw last;
+            }
+
+            @Override
+            public void checkServerTrusted(java.security.cert.X509Certificate[] chain, String authType)
+                    throws java.security.cert.CertificateException {
+                java.security.cert.CertificateException last = null;
+                for (javax.net.ssl.X509TrustManager m : managers) {
+                    try { m.checkServerTrusted(chain, authType); return; }
+                    catch (java.security.cert.CertificateException e) { last = e; }
+                }
+                throw last;
+            }
+
+            @Override
+            public java.security.cert.X509Certificate[] getAcceptedIssuers() {
+                return managers.stream()
+                        .flatMap(m -> java.util.Arrays.stream(m.getAcceptedIssuers()))
+                        .toArray(java.security.cert.X509Certificate[]::new);
+            }
+        };
+    }
+
+    private static javax.net.ssl.X509TrustManager trustManagerFor(java.security.KeyStore ks) throws Exception {
+        javax.net.ssl.TrustManagerFactory tmf = javax.net.ssl.TrustManagerFactory.getInstance(
+                javax.net.ssl.TrustManagerFactory.getDefaultAlgorithm());
+        tmf.init(ks);
+        for (javax.net.ssl.TrustManager tm : tmf.getTrustManagers()) {
+            if (tm instanceof javax.net.ssl.X509TrustManager) {
+                return (javax.net.ssl.X509TrustManager) tm;
+            }
+        }
+        throw new IllegalStateException("No X509TrustManager available");
     }
 
     // === Settings helpers ===
