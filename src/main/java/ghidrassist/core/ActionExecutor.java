@@ -31,6 +31,10 @@ import ghidra.program.model.pcode.HighFunctionDBUtil;
 import ghidra.program.model.pcode.HighSymbol;
 import ghidra.program.model.pcode.HighVariable;
 import ghidra.program.model.symbol.SourceType;
+import ghidra.program.model.symbol.Symbol;
+import ghidra.program.model.symbol.SymbolTable;
+import ghidra.program.model.symbol.SymbolType;
+import ghidra.program.model.symbol.SymbolUtilities;
 import ghidra.util.Msg;
 import ghidra.util.data.DataTypeParser;
 import ghidrassist.AnalysisDB;
@@ -174,9 +178,68 @@ public class ActionExecutor {
         String newName = arguments.get("new_name").getAsString().strip();
 
         Function function = getFunctionAtAddress(program, address);
-        Variable variable = findVariable(function, varName, session);
+        Variable variable = findLocalVariable(function, varName, session);
+        if (variable != null) {
+            variable.setName(newName, SourceType.USER_DEFINED);
+            return;
+        }
 
-        variable.setName(newName, SourceType.USER_DEFINED);
+        // Not a local/parameter: try globals (DAT_xxx, PTR_xxx, named data labels, ...)
+        if (renameGlobal(program, function, varName, newName, session)) {
+            return;
+        }
+
+        throw new InvalidInputException("Variable not found: " + varName);
+    }
+
+    /**
+     * Rename a global symbol referenced by name. Handles default dynamic names (DAT_, PTR_, s_, ...)
+     * which have no stored symbol, existing global labels, and globals known to the decompiler.
+     */
+    private static boolean renameGlobal(Program program, Function function, String varName, String newName,
+            Session session) throws InvalidInputException, DuplicateNameException {
+        SymbolTable symbolTable = program.getSymbolTable();
+
+        // 1. Existing stored global symbol with this name
+        for (Symbol sym : symbolTable.getGlobalSymbols(varName)) {
+            SymbolType type = sym.getSymbolType();
+            if (type == SymbolType.LABEL) {
+                sym.setName(newName, SourceType.USER_DEFINED);
+                return true;
+            }
+        }
+
+        // 2. Default dynamic name, e.g. DAT_00401000 -> address 00401000
+        Address globalAddr = SymbolUtilities.parseDynamicName(program.getAddressFactory(), varName);
+
+        // 3. Ask the decompiler's global symbol map (covers names the decompiler shows)
+        if (globalAddr == null) {
+            DecompileResults res = session.decompile(function);
+            if (res != null && res.decompileCompleted()) {
+                var it = res.getHighFunction().getGlobalSymbolMap().getSymbols();
+                while (it.hasNext()) {
+                    HighSymbol hs = it.next();
+                    if (varName.equals(hs.getName()) && hs.getStorage() != null
+                            && hs.getStorage().getMinAddress() != null) {
+                        globalAddr = hs.getStorage().getMinAddress();
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (globalAddr == null) {
+            return false;
+        }
+
+        Symbol primary = symbolTable.getPrimarySymbol(globalAddr);
+        if (primary != null && !primary.isDynamic() && primary.getSymbolType() == SymbolType.LABEL) {
+            primary.setName(newName, SourceType.USER_DEFINED);
+        } else {
+            Symbol created = symbolTable.createLabel(globalAddr, newName, SourceType.USER_DEFINED);
+            created.setPrimary();
+        }
+        return true;
     }
 
     private static void executeVariableRetype(JsonObject arguments, Program program, Address address,
@@ -226,6 +289,15 @@ public class ActionExecutor {
 
     private static Variable findVariable(Function function, String varName, Session session)
             throws InvalidInputException {
+        Variable variable = findLocalVariable(function, varName, session);
+        if (variable == null) {
+            throw new InvalidInputException("Variable not found: " + varName);
+        }
+        return variable;
+    }
+
+    /** Find a local variable or parameter by name; returns null if not found. */
+    private static Variable findLocalVariable(Function function, String varName, Session session) {
         // Commit local names to ensure all variables are available
         boolean freshlyCommitted = session.ensureLocalsCommitted(function);
         Variable variable = lookupVariable(function, varName);
@@ -234,10 +306,6 @@ public class ActionExecutor {
         if (variable == null && !freshlyCommitted) {
             commitLocalNames(function, session);
             variable = lookupVariable(function, varName);
-        }
-
-        if (variable == null) {
-            throw new InvalidInputException("Variable not found: " + varName);
         }
         return variable;
     }
